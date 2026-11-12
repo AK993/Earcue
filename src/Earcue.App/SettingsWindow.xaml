@@ -835,6 +835,33 @@
                 </Border>
             </StackPanel>
         </Border>
+
+        <!-- 5. Local ASR Model Selection -->
+        <Border Style="{StaticResource CardBorder}" Margin="0,10,0,0">
+            <StackPanel>
+                <TextBlock Text="5 · 语音识别模型 (ASR)" Style="{StaticResource SectionTitle}"/>
+                <TextBlock Style="{StaticResource HintText}"
+                           Text="负责将会议中对方的声音实时转为文字。完全在本地离线运行，音频不上传任何服务器。"/>
+
+                <Grid Margin="0,12,0,0">
+                    <StackPanel>
+                        <TextBlock Text="选择本地识别模型" Style="{StaticResource FieldLabel}"/>
+                        <ComboBox x:Name="CmbAsrModel" SelectionChanged="CmbAsrModel_SelectionChanged">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Vertical" Margin="0,2">
+                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" Foreground="#F8FAFC"/>
+                                        <TextBlock Text="{Binding Description}" FontSize="11" Foreground="#94A3B8" Margin="0,2,0,0"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                    </StackPanel>
+                </Grid>
+
+                <TextBlock x:Name="TxtAsrModelStatus" Style="{StaticResource HintText}" Margin="0,8,0,0" Foreground="#38BDF8"/>
+            </StackPanel>
+        </Border>
             </StackPanel>
         </ScrollViewer>
 

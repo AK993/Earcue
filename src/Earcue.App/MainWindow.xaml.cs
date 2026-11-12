@@ -201,7 +201,8 @@ public partial class MainWindow : Window
     private void OpenModelSettings()
     {
         var originalOverlay = _config.Overlay;
-        var dialog = new SettingsWindow(_config.Llm, _config.Overlay, _config.AutoAnswer) { Owner = this };
+        var previousAsrModel = _config.Asr.LoopbackModel;
+        var dialog = new SettingsWindow(_config.Llm, _config.Overlay, _config.AutoAnswer, _config.Asr) { Owner = this };
 
         // 设置页拖动透明度/字号/颜色时，实时应用到真实字幕卡
         dialog.OverlayPreviewChanged += options => _overlayManager.UpdateOptions(options);
@@ -216,6 +217,7 @@ public partial class MainWindow : Window
         _config.Llm = dialog.Result;
         _config.Overlay = dialog.OverlayResult;
         _config.AutoAnswer = dialog.AutoAnswerResult;
+        _config.Asr = dialog.AsrResult;
 
         try
         {
@@ -241,7 +243,16 @@ public partial class MainWindow : Window
         var autoState = _config.AutoAnswer.Enabled
             ? $"自动应答 {_config.AutoAnswer.SilenceMs / 1000.0:0.0}s"
             : "自动应答关闭";
-        AppendTranscript($"[系统] 设置已更新：{_config.Llm.Model} · {keyState} · {autoState}");
+
+        var asrModelChanged = !string.Equals(previousAsrModel, _config.Asr.LoopbackModel, StringComparison.OrdinalIgnoreCase);
+        var asrModelName = AsrModelCatalog.Find(_config.Asr.LoopbackModel)?.DisplayName ?? _config.Asr.LoopbackModel;
+        if (asrModelChanged)
+        {
+            TxtAsrModel.Text = $"ASR: {asrModelName}";
+            AppendTranscript($"[系统] ASR 语音模型已切换为：{asrModelName}（下一次启动采集时生效）");
+        }
+
+        AppendTranscript($"[系统] 设置已更新：{_config.Llm.Model} · {keyState} · {autoState} · ASR: {asrModelName}");
         AppLogger.Instance.Information(
             "设置已更新: provider={Provider}, host={Host}, model={Model}, hasKey={HasKey}, autoAnswer={Auto}, silenceMs={Silence}",
             _config.Llm.Provider,

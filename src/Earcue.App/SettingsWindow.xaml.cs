@@ -10,6 +10,7 @@ using Earcue.Brain.Llm;
 using Earcue.Core.Configuration;
 using Earcue.Core.Models;
 using Earcue.Core.Security;
+using Earcue.Speech.Asr;
 
 namespace Earcue.App;
 
@@ -29,6 +30,7 @@ public partial class SettingsWindow : Window
     private readonly LlmOptions _draft;
     private OverlayOptions _overlayDraft;
     private readonly AutoAnswerOptions _autoDraft;
+    private readonly AsrOptions _asrDraft;
     private readonly ObservableCollection<ModelItem> _models = new();
     private readonly ICollectionView _modelsView;
 
@@ -38,13 +40,14 @@ public partial class SettingsWindow : Window
     private bool _closed;
     private CancellationTokenSource? _busyCts;
 
-    public SettingsWindow(LlmOptions current, OverlayOptions overlay, AutoAnswerOptions autoAnswer)
+    public SettingsWindow(LlmOptions current, OverlayOptions overlay, AutoAnswerOptions autoAnswer, AsrOptions? asr = null)
     {
         InitializeComponent();
 
         _draft = Clone(current);
         _overlayDraft = Clone(overlay);
         _autoDraft = Clone(autoAnswer);
+        _asrDraft = Clone(asr ?? new AsrOptions());
         _modelsView = CollectionViewSource.GetDefaultView(_models);
         _modelsView.Filter = FilterModel;
         LstModels.ItemsSource = _modelsView;
@@ -52,6 +55,7 @@ public partial class SettingsWindow : Window
         CmbProvider.ItemsSource = LlmProviderPresets.All;
         LoadDraft();
         LoadOverlayDraft();
+        LoadAsrDraft();
 
         // 小屏 / 高缩放下让窗口不超出工作区，内容区可滚动，底部按钮始终可见
         var workArea = SystemParameters.WorkArea;
@@ -84,6 +88,8 @@ public partial class SettingsWindow : Window
     public OverlayOptions OverlayResult => _overlayDraft;
 
     public AutoAnswerOptions AutoAnswerResult => _autoDraft;
+
+    public AsrOptions AsrResult => _asrDraft;
 
     /// <summary>设置页每次调整外观时触发，用于主窗口实时应用到真实浮层。</summary>
     public event Action<OverlayOptions>? OverlayPreviewChanged;
@@ -133,6 +139,53 @@ public partial class SettingsWindow : Window
         _overlayInitializing = false;
         UpdateOverlayValueLabels();
         UpdateOverlayPreview();
+    }
+
+    private void LoadAsrDraft()
+    {
+        var list = new List<AsrModelViewItem>();
+        foreach (var descriptor in AsrModelCatalog.All)
+        {
+            bool installed = AsrModelLocator.TryLocate(descriptor.Id, _asrDraft.ModelRoot, _asrDraft.UseInt8, out _, out _);
+            var status = installed ? "✔ 已就绪" : "⏳ 需下载";
+            list.Add(new AsrModelViewItem
+            {
+                Id = descriptor.Id,
+                DisplayName = $"{status} · {descriptor.DisplayName} ({descriptor.SizeDisplay})",
+                Description = descriptor.Description,
+                IsInstalled = installed
+            });
+        }
+
+        CmbAsrModel.ItemsSource = list;
+        var selected = list.FirstOrDefault(m => string.Equals(m.Id, _asrDraft.LoopbackModel, StringComparison.OrdinalIgnoreCase)) ?? list.FirstOrDefault();
+        CmbAsrModel.SelectedItem = selected;
+        UpdateAsrStatusText(selected);
+    }
+
+    private void CmbAsrModel_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (CmbAsrModel.SelectedItem is AsrModelViewItem item)
+        {
+            _asrDraft.LoopbackModel = item.Id;
+            _asrDraft.MicModel = item.Id;
+            UpdateAsrStatusText(item);
+        }
+    }
+
+    private void UpdateAsrStatusText(AsrModelViewItem? item)
+    {
+        if (item is null) return;
+        if (item.IsInstalled)
+        {
+            TxtAsrModelStatus.Text = "✔ 该模型已在本机安装就绪，保存后在下一次开启采集时生效。";
+            TxtAsrModelStatus.Foreground = SuccessBrush;
+        }
+        else
+        {
+            TxtAsrModelStatus.Text = "⚠ 该模型尚未完全下载（若后台正在下载，完成后将自动生效；或使用 tools\\download-asr-models.ps1 下载）。";
+            TxtAsrModelStatus.Foreground = InfoBrush;
+        }
     }
 
     private static int AutoHideIndex(int seconds)
@@ -910,6 +963,28 @@ public partial class SettingsWindow : Window
         UserRoleDescription = source.UserRoleDescription,
         UserStance = source.UserStance
     };
+    private static AsrOptions Clone(AsrOptions source) => new()
+    {
+        LoopbackModel = source.LoopbackModel,
+        MicModel = source.MicModel,
+        ModelRoot = source.ModelRoot,
+        Hotwords = new List<string>(source.Hotwords),
+        NumThreads = source.NumThreads,
+        UseInt8 = source.UseInt8,
+        DecodingMethod = source.DecodingMethod
+    };
+}
+
+/// <summary>ASR 模型选择项。</summary>
+public sealed class AsrModelViewItem
+{
+    public string Id { get; init; } = string.Empty;
+
+    public string DisplayName { get; init; } = string.Empty;
+
+    public string Description { get; init; } = string.Empty;
+
+    public bool IsInstalled { get; set; }
 }
 
 /// <summary>设置页模型列表中的一行。</summary>

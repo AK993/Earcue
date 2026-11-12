@@ -76,14 +76,12 @@ foreach ($entry in $selected) {
         if ($existingHash -ieq $entry.sha256) {
             Write-Host "[reuse] 已有完整压缩包，跳过下载" -ForegroundColor DarkGray
             $needDownload = $false
-        } else {
-            Remove-Item -LiteralPath $archive -Force
         }
     }
 
     if ($needDownload) {
         if ($curl) {
-            & $curl.Source -L --fail --retry 5 --retry-delay 3 --connect-timeout 20 -o $archive $entry.url
+            & $curl.Source -L -C - --fail --retry 10 --retry-delay 3 --connect-timeout 20 -o $archive $entry.url
             if ($LASTEXITCODE -ne 0) {
                 throw "下载失败（curl exit $LASTEXITCODE）: $($entry.url)"
             }
