@@ -1,0 +1,18 @@
+[
+  {
+    "id": "sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23",
+    "displayName": "中文流式 Zipformer 14M",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23.tar.bz2",
+    "sha256": "2CBD71B640D9C37D3784F29367333A4577B0398B62E9DEEED418170B081CBA8B",
+    "sizeBytes": 74004050,
+    "description": "中文流式识别，14M 参数，CPU 实时，资源占用最低；英文专名识别较弱。"
+  },
+  {
+    "id": "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
+    "displayName": "中英双语流式 Zipformer",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2",
+    "sha256": "27FFBD9EE24AD186D99ACC2F6354D7992B27BCAB490812510665FA8F9389C5F8",
+    "sizeBytes": 511274346,
+    "description": "中文 + 英文混说，适合有英文术语/外企会议；模型比纯中文版大，CPU 占用略高。"
+  }
+]

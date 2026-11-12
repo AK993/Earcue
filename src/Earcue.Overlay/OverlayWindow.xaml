@@ -23,7 +23,8 @@
                 CornerRadius="12"
                 BorderBrush="#30FFFFFF"
                 BorderThickness="1"
-                Padding="16,14">
+                Padding="16,14"
+                MouseLeftButtonDown="Card_MouseLeftButtonDown">
             <Border.Effect>
                 <DropShadowEffect BlurRadius="18" ShadowDepth="4" Direction="270" Color="#000000" Opacity="0.45"/>
             </Border.Effect>
@@ -68,5 +69,38 @@
                            Effect="{StaticResource TextShadow}"/>
             </StackPanel>
         </Border>
+
+        <!-- Edit mode chrome -->
+        <Rectangle x:Name="EditBorder"
+                   Stroke="#38BDF8"
+                   StrokeThickness="1.5"
+                   StrokeDashArray="4 3"
+                   RadiusX="12"
+                   RadiusY="12"
+                   Visibility="Collapsed"
+                   IsHitTestVisible="False"/>
+
+        <Thumb x:Name="ResizeGrip"
+               Width="18"
+               Height="18"
+               HorizontalAlignment="Right"
+               VerticalAlignment="Bottom"
+               Margin="0,0,4,4"
+               Cursor="SizeNWSE"
+               Visibility="Collapsed"
+               DragDelta="ResizeGrip_DragDelta"
+               DragCompleted="ResizeGrip_DragCompleted">
+            <Thumb.Template>
+                <ControlTemplate TargetType="Thumb">
+                    <Border Background="#38BDF8" CornerRadius="4">
+                        <Path Data="M 4 14 L 14 4 M 9 14 L 14 9"
+                              Stroke="#0F141C"
+                              StrokeThickness="1.5"
+                              HorizontalAlignment="Center"
+                              VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Thumb.Template>
+        </Thumb>
     </Grid>
 </Window>

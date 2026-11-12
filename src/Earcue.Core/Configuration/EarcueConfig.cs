@@ -1,5 +1,8 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Earcue.Core.Models;
+using Earcue.Core.Security;
 
 namespace Earcue.Core.Configuration;
 
@@ -14,6 +17,12 @@ public sealed class EarcueConfig
     [JsonPropertyName("trigger")]
     public TriggerOptions Trigger { get; set; } = new();
 
+    [JsonPropertyName("autoAnswer")]
+    public AutoAnswerOptions AutoAnswer { get; set; } = new();
+
+    [JsonPropertyName("profile")]
+    public ProfileOptions Profile { get; set; } = new();
+
     [JsonPropertyName("llm")]
     public LlmOptions Llm { get; set; } = new();
 
@@ -26,13 +35,27 @@ public sealed class EarcueConfig
     [JsonPropertyName("privacy")]
     public PrivacyOptions Privacy { get; set; } = new();
 
+    private static readonly JsonSerializerOptions LoadOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true
+    };
+
+    private static readonly JsonSerializerOptions SaveOptions = new()
+    {
+        WriteIndented = true,
+        // 让中文说明在 config.json 里保持可读
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
     public static EarcueConfig LoadFromFile(string path)
     {
         if (!File.Exists(path))
             return new EarcueConfig();
 
         var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<EarcueConfig>(json) ?? new EarcueConfig();
+        return JsonSerializer.Deserialize<EarcueConfig>(json, LoadOptions) ?? new EarcueConfig();
     }
 
     public void SaveToFile(string path)
@@ -43,8 +66,12 @@ public sealed class EarcueConfig
             Directory.CreateDirectory(dir);
         }
 
-        var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(path, json);
+        var json = JsonSerializer.Serialize(this, SaveOptions);
+
+        // 先写临时文件再替换，避免写一半时崩溃导致配置损坏
+        var tempPath = path + ".tmp";
+        File.WriteAllText(tempPath, json);
+        File.Move(tempPath, path, overwrite: true);
     }
 }
 
@@ -56,8 +83,24 @@ public sealed class AsrOptions
     [JsonPropertyName("micModel")]
     public string MicModel { get; set; } = "sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23";
 
+    /// <summary>模型根目录；留空则使用 %LOCALAPPDATA%\Earcue\models。</summary>
+    [JsonPropertyName("modelRoot")]
+    public string ModelRoot { get; set; } = string.Empty;
+
     [JsonPropertyName("hotwords")]
     public List<string> Hotwords { get; set; } = new();
+
+    /// <summary>sherpa-onnx 推理线程数；14M 模型在 2 线程下通常已可实时。</summary>
+    [JsonPropertyName("numThreads")]
+    public int NumThreads { get; set; } = 2;
+
+    /// <summary>是否优先使用 *.int8.onnx（体积小、CPU 更快；默认开启）。</summary>
+    [JsonPropertyName("useInt8")]
+    public bool UseInt8 { get; set; } = true;
+
+    /// <summary>sherpa-onnx 解码方法：greedy_search（低延迟）或 modified_beam_search（更准）。</summary>
+    [JsonPropertyName("decodingMethod")]
+    public string DecodingMethod { get; set; } = "greedy_search";
 }
 
 public sealed class SegmentOptions
@@ -81,22 +124,77 @@ public sealed class TriggerOptions
     public int MinChars { get; set; } = 5;
 }
 
+/// <summary>
+/// 自动应答：不再判断"是不是疑问句"，而是把最近识别到的全部内容交给 LLM；
+/// 当连续一段时间没有新的识别文本时，自动生成一条接话提示。
+/// </summary>
+public sealed class AutoAnswerOptions
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>连续多久没有新的识别内容后触发应答。</summary>
+    [JsonPropertyName("silenceMs")]
+    public int SilenceMs { get; set; } = 2000;
+
+    /// <summary>距离上次应答后累计的新增字数达到此值才触发，避免"嗯/好"之类的噪声。</summary>
+    [JsonPropertyName("minChars")]
+    public int MinChars { get; set; } = 6;
+
+    /// <summary>两次自动应答之间的最小间隔。</summary>
+    [JsonPropertyName("cooldownMs")]
+    public int CooldownMs { get; set; } = 3000;
+}
+
+/// <summary>
+/// 面试场景资料：我是候选人还是面试官，以及可用于回答的个人简历/背景。
+/// 简历只保存在本机 config.json；发送给模型时会按 MaxResumeChars 截断。
+/// </summary>
+public sealed class ProfileOptions
+{
+    [JsonPropertyName("role")]
+    public string Role { get; set; } = InterviewRolePresets.Candidate;
+
+    [JsonPropertyName("resume")]
+    public string Resume { get; set; } = string.Empty;
+
+    [JsonPropertyName("maxResumeChars")]
+    public int MaxResumeChars { get; set; } = 2500;
+
+    [JsonIgnore]
+    public InterviewRole RoleValue => InterviewRolePresets.ToRole(Role);
+
+    [JsonIgnore]
+    public string RoleDisplayName => InterviewRolePresets.Find(Role).DisplayName;
+}
+
 public sealed class LlmOptions
 {
+    /// <summary>服务商预设 Id（见 <see cref="LlmProviderPresets"/>），仅用于设置页回显。</summary>
     [JsonPropertyName("provider")]
-    public string Provider { get; set; } = "OpenAI-Compatible";
+    public string Provider { get; set; } = "deepseek";
 
     [JsonPropertyName("baseUrl")]
     public string BaseUrl { get; set; } = "https://api.deepseek.com/v1";
 
-    [JsonPropertyName("apiKey")]
+    /// <summary>运行期内存中的明文 Key，绝不写入 config.json。</summary>
+    [JsonIgnore]
     public string ApiKey { get; set; } = string.Empty;
+
+    /// <summary>DPAPI 加密后的 Key（Base64，带 dpapi:v1: 前缀），这是唯一落盘形式。</summary>
+    [JsonPropertyName("apiKeyProtected")]
+    public string ProtectedApiKey { get; set; } = string.Empty;
 
     [JsonPropertyName("model")]
     public string Model { get; set; } = "deepseek-chat";
 
+    /// <summary>已废弃：回答不再限制字数，保留字段只为兼容旧 config.json。</summary>
     [JsonPropertyName("maxChars")]
-    public int MaxChars { get; set; } = 40;
+    public int MaxChars { get; set; } = 0;
+
+    /// <summary>单次回答的最大输出 token。这是模型输出安全上限，不是字数限制。</summary>
+    [JsonPropertyName("maxTokens")]
+    public int MaxTokens { get; set; } = 1024;
 
     [JsonPropertyName("timeoutMs")]
     public int TimeoutMs { get; set; } = 20000;
@@ -109,21 +207,101 @@ public sealed class LlmOptions
 
     [JsonPropertyName("userStance")]
     public string UserStance { get; set; } = string.Empty;
+
+    /// <summary>内存中是否已有可用 Key（未 Load 时也会检查密文是否存在）。</summary>
+    [JsonIgnore]
+    public bool HasApiKey =>
+        !string.IsNullOrWhiteSpace(ApiKey) || !string.IsNullOrWhiteSpace(ProtectedApiKey);
+
+    /// <summary>用于界面展示的脱敏 Key，例如 sk-…a1b2。</summary>
+    [JsonIgnore]
+    public string MaskedApiKey
+    {
+        get
+        {
+            var key = ApiKey;
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return string.IsNullOrEmpty(ProtectedApiKey) ? "未配置" : "已加密保存";
+            }
+
+            return key.Length < 12 ? "已配置" : $"{key[..3]}…{key[^4..]}";
+        }
+    }
+
+    /// <summary>设置 API Key：同时更新内存明文与 DPAPI 密文；传入空值表示清除。</summary>
+    public void SetApiKey(string? apiKey)
+    {
+        var trimmed = apiKey?.Trim() ?? string.Empty;
+        ApiKey = trimmed;
+        ProtectedApiKey = trimmed.Length == 0 ? string.Empty : ApiKeyProtector.Protect(trimmed);
+    }
+
+    /// <summary>从密文恢复内存明文 Key，返回是否恢复成功。</summary>
+    public bool TryLoadApiKey()
+    {
+        if (!string.IsNullOrWhiteSpace(ApiKey))
+        {
+            return true;
+        }
+
+        ApiKey = ApiKeyProtector.Unprotect(ProtectedApiKey) ?? string.Empty;
+        return !string.IsNullOrWhiteSpace(ApiKey);
+    }
 }
 
 public sealed class OverlayOptions
 {
+    /// <summary>整体不透明度（0.05–1.0），同时作用于卡片背景与文字。</summary>
     [JsonPropertyName("opacity")]
     public double Opacity { get; set; } = 0.92;
 
+    /// <summary>绝对 X 坐标；与 PositionY 同时有值时优先于 Position 预设。</summary>
     [JsonPropertyName("positionX")]
     public double? PositionX { get; set; }
 
+    /// <summary>绝对 Y 坐标；与 PositionX 同时有值时优先于 Position 预设。</summary>
     [JsonPropertyName("positionY")]
     public double? PositionY { get; set; }
 
+    /// <summary>预设位置：BottomLeft / BottomRight / TopLeft / TopRight / Custom（拖动后）。</summary>
+    [JsonPropertyName("position")]
+    public string Position { get; set; } = OverlayPositionPresets.BottomLeft;
+
+    [JsonPropertyName("marginX")]
+    public double MarginX { get; set; } = 24;
+
+    [JsonPropertyName("marginY")]
+    public double MarginY { get; set; } = 24;
+
+    /// <summary>卡片宽度；拖动右下角手柄可调整。</summary>
+    [JsonPropertyName("width")]
+    public double Width { get; set; } = 460;
+
+    /// <summary>卡片最小高度；内容更长时仍会自动向上生长。</summary>
+    [JsonPropertyName("minHeight")]
+    public double MinHeight { get; set; } = 0;
+
+    /// <summary>字体族名称，例如 "Microsoft YaHei UI"。</summary>
+    [JsonPropertyName("fontFamily")]
+    public string FontFamily { get; set; } = "Microsoft YaHei UI";
+
+    [JsonPropertyName("questionFontSize")]
+    public double QuestionFontSize { get; set; } = 13;
+
+    [JsonPropertyName("answerFontSize")]
+    public double AnswerFontSize { get; set; } = 15;
+
+    /// <summary>答案文字颜色，#RRGGBB。</summary>
+    [JsonPropertyName("answerColor")]
+    public string AnswerColor { get; set; } = "#00F0FF";
+
     [JsonPropertyName("excludeFromCapture")]
     public bool ExcludeFromCapture { get; set; } = true;
+
+    /// <summary>是否在无新内容一段时间后自动隐藏；默认关闭，卡片会保留到被新回答替换。</summary>
+    [JsonPropertyName("autoHide")]
+    public bool AutoHide { get; set; } = false;
 
     [JsonPropertyName("autoFadeoutSeconds")]
     public int AutoFadeoutSeconds { get; set; } = 20;

@@ -7,6 +7,7 @@ x86/
 x64/
 out/
 build/
+publish/
 .vs/
 .idea/
 .vscode/
@@ -27,6 +28,12 @@ tests/fixtures/*.pcm
 *.log
 logs/
 %LOCALAPPDATA%/Earcue/logs/
+
+## Local runtime config (contains DPAPI-encrypted secrets)
+config.json
+
+## Local verification artifacts
+artifacts-*.png
 
 ## Models
 tools/models/

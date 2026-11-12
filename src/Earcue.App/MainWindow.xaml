@@ -60,12 +60,15 @@
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <Border Width="12" Height="12" CornerRadius="6" Background="#10B981" Margin="0,0,10,0"/>
                 <TextBlock Text="附耳 Earcue" FontSize="20" FontWeight="Bold" Foreground="#38BDF8"/>
-                <TextBlock Text="· 会议提问 40 字瞬时提词器" FontSize="14" Foreground="#94A3B8" Margin="8,4,0,0"/>
+                <TextBlock Text="· 会议实时提词器" FontSize="14" Foreground="#94A3B8" Margin="8,4,0,0"/>
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button x:Name="BtnTestOverlay" Content="💡 预览置顶字幕卡" Margin="0,0,10,0" Click="BtnTestOverlay_Click"/>
-                <Button x:Name="BtnToggleCapture" Content="▶ 启动 WASAPI 环回采集" Click="BtnToggleCapture_Click"/>
+                <Button x:Name="BtnTestOverlay" Content="💡 预览" Margin="0,0,10,0" ToolTip="预览置顶字幕卡" Click="BtnTestOverlay_Click"/>
+                <Button x:Name="BtnEditOverlay" Content="🖱 调整" Margin="0,0,10,0" ToolTip="打开后可以鼠标拖动/缩放字幕卡" Click="BtnEditOverlay_Click"/>
+                <Button x:Name="BtnModelSettings" Content="⚙ 设置" Margin="0,0,10,0" Click="BtnModelSettings_Click"/>
+                <Button x:Name="BtnProfile" Content="👤 面试资料" Margin="0,0,10,0" Click="BtnProfile_Click"/>
+                <Button x:Name="BtnToggleCapture" Content="▶ 启动采集与本地识别" Click="BtnToggleCapture_Click"/>
             </StackPanel>
         </Grid>
 
@@ -83,6 +86,7 @@
                     <TextBlock Text="音频采集 (WASAPI)" FontSize="12" Foreground="#64748B" FontWeight="Bold" Margin="0,0,0,4"/>
                     <TextBlock x:Name="TxtAudioStatus" Text="状态: 未运行 (点击上方启动)" FontSize="13" Foreground="#F8FAFC"/>
                     <TextBlock x:Name="TxtSampleCount" Text="累计帧数: 0 帧 | 漂移: 0ms" FontSize="11" Foreground="#94A3B8" Margin="0,2,0,0"/>
+                    <TextBlock x:Name="TxtAsrModel" Text="ASR: 未加载" FontSize="11" Foreground="#94A3B8" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
 
                 <!-- Col 2: Overlay Capture Status -->
@@ -95,8 +99,8 @@
                 <!-- Col 3: LLM Settings -->
                 <StackPanel Grid.Column="2">
                     <TextBlock Text="回答模型 (LLM API)" FontSize="12" Foreground="#64748B" FontWeight="Bold" Margin="0,0,0,4"/>
-                    <TextBlock x:Name="TxtLlmStatus" Text="DeepSeek / OpenAI 兼容" FontSize="13" Foreground="#F8FAFC"/>
-                    <TextBlock Text="上限 40 字 | 口语化直接说出口" FontSize="11" Foreground="#94A3B8" Margin="0,2,0,0"/>
+                    <TextBlock x:Name="TxtLlmStatus" Text="DeepSeek · deepseek-chat" FontSize="13" Foreground="#F8FAFC" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="TxtLlmKeyStatus" Text="API Key: 未配置，点击【设置】" FontSize="11" Foreground="#FBBF24" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -115,7 +119,12 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Text="实时转录流水线 (带 [对方]/[我] 角色标注)" FontSize="13" FontWeight="Bold" Foreground="#94A3B8" Margin="0,0,0,10"/>
+                    <StackPanel Grid.Row="0" Margin="0,0,0,10">
+                        <TextBlock Text="实时转录流水线 (带 [对方]/[我] 角色标注)" FontSize="13" FontWeight="Bold" Foreground="#94A3B8"/>
+                        <TextBlock x:Name="TxtLiveAsr" Text="" FontSize="12" Foreground="#38BDF8"
+                                   FontFamily="Consolas, Microsoft YaHei"
+                                   TextTrimming="CharacterEllipsis" MinHeight="16" Margin="0,5,0,0"/>
+                    </StackPanel>
                     <ScrollViewer Grid.Row="1" x:Name="ScrollerTranscript" VerticalScrollBarVisibility="Auto">
                         <TextBox x:Name="TxtTranscript"
                                  Background="Transparent"
@@ -125,7 +134,7 @@
                                  TextWrapping="Wrap"
                                  FontSize="13"
                                  FontFamily="Consolas, Microsoft YaHei"
-                                 Text="[系统] 附耳流水线就绪。点击右上角【启动 WASAPI 环回采集】开始监听会议声音。&#x0a;[系统] 或点击【预览置顶字幕卡】测试屏幕共享防泄露卡片。&#x0a;"/>
+                                 Text="[系统] 附耳流水线就绪。点击右上角【启动采集与本地识别】开始监听会议声音。&#x0a;[系统] 首次使用需先安装本地 ASR 模型，缺少模型时启动会提示下载命令。&#x0a;"/>
                     </ScrollViewer>
                 </Grid>
             </Border>

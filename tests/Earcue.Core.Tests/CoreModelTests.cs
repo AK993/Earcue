@@ -55,7 +55,16 @@ public class CoreModelTests
     }
 
     [Fact]
-    public void Prompt_BuildSystemPrompt_ContainsAllConstraints()
+    public void LlmOptions_NoHardCharacterLimitAndHasOutputTokenBudget()
+    {
+        var options = new LlmOptions();
+
+        Assert.Equal(0, options.MaxChars);
+        Assert.InRange(options.MaxTokens, 512, 8192);
+    }
+
+    [Fact]
+    public void Prompt_BuildSystemPrompt_ContainsIdentityAndNoHardLimit()
     {
         var prompt = new Prompt
         {
@@ -64,7 +73,8 @@ public class CoreModelTests
         };
 
         var systemPrompt = prompt.BuildSystemPrompt();
-        Assert.Contains("40 字", systemPrompt);
+        Assert.DoesNotContain("40 字", systemPrompt);
+        Assert.DoesNotContain("≤ 40", systemPrompt);
         Assert.Contains("研发技术主管", systemPrompt);
         Assert.Contains("第一人称", systemPrompt);
     }
