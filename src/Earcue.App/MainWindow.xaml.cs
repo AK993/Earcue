@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Threading;
@@ -9,6 +10,7 @@ using Earcue.Core.Logging;
 using Earcue.Core.Models;
 using Earcue.Overlay;
 using Earcue.Speech.Asr;
+using Forms = System.Windows.Forms;
 
 namespace Earcue.App;
 
@@ -22,6 +24,10 @@ public partial class MainWindow : Window
     private readonly DialogueContextBuffer _contextBuffer;
     private OpenAiCompatibleLlmClient _llmClient;
     private readonly DispatcherTimer _autoAnswerTimer;
+
+    private Forms.NotifyIcon? _notifyIcon;
+    private bool _reallyExit;
+    private bool _hasShownMinimizeTip;
 
     private long _frameCount = 0;
     private bool _asrErrorLogged;
@@ -70,6 +76,13 @@ public partial class MainWindow : Window
 
         RefreshLlmUi();
         RefreshProfileUi();
+
+        InitializeTrayIcon();
+
+        System.Windows.Application.Current.SessionEnding += (s, e) =>
+        {
+            _reallyExit = true;
+        };
 
         AppLogger.Instance.Information("Earcue 应用程序主窗口初始化完成");
     }
@@ -746,6 +759,176 @@ public partial class MainWindow : Window
         });
     }
 
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        if (!_reallyExit)
+        {
+            e.Cancel = true;
+            Hide();
+
+            if (!_hasShownMinimizeTip && _notifyIcon != null)
+            {
+                _hasShownMinimizeTip = true;
+                try
+                {
+                    _notifyIcon.ShowBalloonTip(
+                        3000,
+                        "附耳 Earcue · 后台持续运行中",
+                        "控制台已隐藏至系统托盘，继续在后台为您提供会议提词服务。\n单击托盘图标即可重新打开控制台，右键可进行快捷控制或彻底退出。",
+                        Forms.ToolTipIcon.Info);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Instance.Warning(ex, "弹出托盘气泡提示失败");
+                }
+            }
+            return;
+        }
+
+        base.OnClosing(e);
+    }
+
+    private void RestoreMainWindow()
+    {
+        Dispatcher.Invoke(() =>
+        {
+            if (!IsVisible)
+            {
+                Show();
+            }
+            if (WindowState == WindowState.Minimized)
+            {
+                WindowState = WindowState.Normal;
+            }
+            Activate();
+            Topmost = true;
+            Topmost = false;
+            Focus();
+        });
+    }
+
+    private void ExitApplication()
+    {
+        Dispatcher.Invoke(() =>
+        {
+            _reallyExit = true;
+            Close();
+            System.Windows.Application.Current.Shutdown();
+        });
+    }
+
+    private void InitializeTrayIcon()
+    {
+        try
+        {
+            _notifyIcon = new Forms.NotifyIcon
+            {
+                Text = "附耳 Earcue · 会议实时提词器",
+                Visible = true
+            };
+
+            // 优先从输出目录的 Assets\app.ico 加载
+            var iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "app.ico");
+            if (File.Exists(iconPath))
+            {
+                try
+                {
+                    _notifyIcon.Icon = new System.Drawing.Icon(iconPath);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Instance.Warning(ex, "从 Assets/app.ico 加载托盘图标失败");
+                }
+            }
+
+            if (_notifyIcon.Icon == null)
+            {
+                try
+                {
+                    var exePath = Environment.ProcessPath ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+                    if (!string.IsNullOrEmpty(exePath) && File.Exists(exePath))
+                    {
+                        _notifyIcon.Icon = System.Drawing.Icon.ExtractAssociatedIcon(exePath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Instance.Warning(ex, "从主程序提取关联图标失败");
+                }
+            }
+
+            if (_notifyIcon.Icon == null)
+            {
+                _notifyIcon.Icon = System.Drawing.SystemIcons.Application;
+            }
+
+            var contextMenu = new Forms.ContextMenuStrip();
+
+            var itemConsole = new Forms.ToolStripMenuItem("显示控制台", null, (s, e) =>
+            {
+                if (IsVisible)
+                {
+                    Hide();
+                }
+                else
+                {
+                    RestoreMainWindow();
+                }
+            });
+
+            var itemCapture = new Forms.ToolStripMenuItem("开启采集与识别", null, (s, e) =>
+            {
+                Dispatcher.Invoke(() => BtnToggleCapture_Click(this, new RoutedEventArgs()));
+            });
+
+            var itemOverlay = new Forms.ToolStripMenuItem("测试提词卡显示", null, (s, e) =>
+            {
+                Dispatcher.Invoke(() => BtnTestOverlay_Click(this, new RoutedEventArgs()));
+            });
+
+            var itemExit = new Forms.ToolStripMenuItem("彻底退出 (Exit)", null, (s, e) =>
+            {
+                ExitApplication();
+            });
+
+            contextMenu.Opening += (s, e) =>
+            {
+                itemConsole.Text = IsVisible ? "隐藏控制台" : "显示控制台";
+                var isCapturing = _loopbackSource != null && _loopbackSource.IsRunning;
+                itemCapture.Text = isCapturing ? "停止采集与识别" : "开启采集与识别";
+            };
+
+            contextMenu.Items.Add(itemConsole);
+            contextMenu.Items.Add(itemCapture);
+            contextMenu.Items.Add(itemOverlay);
+            contextMenu.Items.Add(new Forms.ToolStripSeparator());
+            contextMenu.Items.Add(itemExit);
+
+            _notifyIcon.ContextMenuStrip = contextMenu;
+
+            // 单击或双击托盘图标恢复控制台
+            _notifyIcon.MouseClick += (s, e) =>
+            {
+                if (e.Button == Forms.MouseButtons.Left)
+                {
+                    RestoreMainWindow();
+                }
+            };
+            _notifyIcon.DoubleClick += (s, e) =>
+            {
+                RestoreMainWindow();
+            };
+            _notifyIcon.BalloonTipClicked += (s, e) =>
+            {
+                RestoreMainWindow();
+            };
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Instance.Error(ex, "初始化系统托盘图标失败");
+        }
+    }
+
     private void OnWindowClosed(object? sender, EventArgs e)
     {
         _isClosing = true;
@@ -757,5 +940,17 @@ public partial class MainWindow : Window
         _asrEngine?.Dispose();
         _asrEngine = null;
         _overlayManager.Close();
+
+        if (_notifyIcon != null)
+        {
+            _notifyIcon.Visible = false;
+            _notifyIcon.Dispose();
+            _notifyIcon = null;
+        }
+
+        if (_reallyExit)
+        {
+            System.Windows.Application.Current.Shutdown();
+        }
     }
 }

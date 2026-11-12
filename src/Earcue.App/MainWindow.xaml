@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="附耳 Earcue · 会议实时问答助手 控制台 (v0.1)"
         Height="680" Width="960"
+        Icon="Assets/app.ico"
         WindowStartupLocation="CenterScreen"
         Background="#0F141C"
         Foreground="#E0E6ED">

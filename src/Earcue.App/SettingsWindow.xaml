@@ -6,6 +6,7 @@
         MinHeight="700" MinWidth="760"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
+        Icon="Assets/app.ico"
         Background="#0F141C"
         Foreground="#E0E6ED"
         FontFamily="Microsoft YaHei UI, Segoe UI"
