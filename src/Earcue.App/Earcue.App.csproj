@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Earcue.Core\Earcue.Core.csproj" />
+    <ProjectReference Include="..\Earcue.Audio\Earcue.Audio.csproj" />
+    <ProjectReference Include="..\Earcue.Speech\Earcue.Speech.csproj" />
+    <ProjectReference Include="..\Earcue.Brain\Earcue.Brain.csproj" />
+    <ProjectReference Include="..\Earcue.Overlay\Earcue.Overlay.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+</Project>

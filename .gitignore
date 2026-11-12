@@ -1,0 +1,33 @@
+## Build and Output Directories
+bin/
+obj/
+[Aa]rms/
+[Aa]rms64/
+x86/
+x64/
+out/
+build/
+.vs/
+.idea/
+.vscode/
+
+## Visual Studio / Roslyn
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Tests and Fixtures
+tests/fixtures/*.wav
+tests/fixtures/*.mp3
+tests/fixtures/*.m4a
+tests/fixtures/*.pcm
+
+## Logs and Runtime data
+*.log
+logs/
+%LOCALAPPDATA%/Earcue/logs/
+
+## Models
+tools/models/
+*.onnx
