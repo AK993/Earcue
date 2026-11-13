@@ -15,6 +15,8 @@ public sealed class WasapiLoopbackSource : IAudioSource
     private AudioFormatConverter? _converter;
     private Thread? _workerThread;
     private readonly CancellationTokenSource _cts = new();
+    private readonly object _captureGate = new();
+    private volatile bool _isReconnecting;
     private bool _isDisposed;
 
     private readonly byte[] _silenceFrame = new byte[320]; // 16kHz * 16bit * 1ch * 10ms = 320 bytes
@@ -80,6 +82,90 @@ public sealed class WasapiLoopbackSource : IAudioSource
         {
             AppLogger.Instance.Warning(e.Exception, "WASAPI 环回采集异常停止，尝试重启...");
         }
+
+        if (IsRunning && !_cts.IsCancellationRequested)
+        {
+            _ = ReconnectLoopAsync();
+        }
+    }
+
+    private async Task ReconnectLoopAsync()
+    {
+        if (_isReconnecting || !IsRunning || _cts.IsCancellationRequested)
+        {
+            return;
+        }
+
+        _isReconnecting = true;
+        AppLogger.Instance.Warning("WASAPI 环回音频流异常断开，正在尝试自动重连默认输出设备...");
+
+        const int maxAttempts = 20; // 持续重试约 40 秒
+        for (int attempt = 1; attempt <= maxAttempts && IsRunning && !_cts.IsCancellationRequested; attempt++)
+        {
+            try
+            {
+                await Task.Delay(2000, _cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            if (!IsRunning || _cts.IsCancellationRequested)
+            {
+                break;
+            }
+
+            lock (_captureGate)
+            {
+                try
+                {
+                    if (_capture != null)
+                    {
+                        _capture.DataAvailable -= OnDataAvailable;
+                        _capture.RecordingStopped -= OnRecordingStopped;
+                        try { _capture.StopRecording(); } catch { }
+                        _capture.Dispose();
+                        _capture = null;
+                    }
+
+                    var newCapture = new WasapiLoopbackCapture();
+                    var waveFormat = newCapture.WaveFormat;
+                    bool isFloat = waveFormat.Encoding == WaveFormatEncoding.IeeeFloat;
+
+                    _converter = new AudioFormatConverter(waveFormat.SampleRate, waveFormat.Channels, isFloat);
+                    _ringBuffer?.Clear();
+
+                    newCapture.DataAvailable += OnDataAvailable;
+                    newCapture.RecordingStopped += OnRecordingStopped;
+
+                    newCapture.StartRecording();
+                    _capture = newCapture;
+
+                    _wallClock.Restart();
+                    _totalSamplesDispatched = 0;
+
+                    _isReconnecting = false;
+                    AppLogger.Instance.Information(
+                        "WASAPI 环回设备重连成功: {SampleRate}Hz, {Channels}声道, {Bits}bit (第 {Attempt} 次重试生效)",
+                        waveFormat.SampleRate,
+                        waveFormat.Channels,
+                        waveFormat.BitsPerSample,
+                        attempt);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Instance.Warning(ex, "第 {Attempt}/{Max} 次重连音频设备失败，将在 2 秒后继续重试", attempt, maxAttempts);
+                }
+            }
+        }
+
+        _isReconnecting = false;
+        if (IsRunning && !_cts.IsCancellationRequested)
+        {
+            AppLogger.Instance.Error("WASAPI 环回重连超出最大尝试次数，未能自动恢复音频设备");
+        }
     }
 
     private void ProcessLoop()
@@ -90,6 +176,12 @@ public sealed class WasapiLoopbackSource : IAudioSource
 
         while (!_cts.Token.IsCancellationRequested)
         {
+            if (_isReconnecting)
+            {
+                Thread.Sleep(50);
+                continue;
+            }
+
             int available = _ringBuffer?.AvailableToRead ?? 0;
             if (available > 0)
             {
@@ -159,15 +251,23 @@ public sealed class WasapiLoopbackSource : IAudioSource
         IsRunning = false;
 
         _cts.Cancel();
-        try
+        lock (_captureGate)
         {
-            _capture?.StopRecording();
-            _capture?.Dispose();
-            _capture = null;
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Instance.Warning(ex, "停止 WASAPI 时发生异常");
+            try
+            {
+                if (_capture != null)
+                {
+                    _capture.DataAvailable -= OnDataAvailable;
+                    _capture.RecordingStopped -= OnRecordingStopped;
+                    try { _capture.StopRecording(); } catch { }
+                    _capture.Dispose();
+                    _capture = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Instance.Warning(ex, "停止 WASAPI 时发生异常");
+            }
         }
 
         _workerThread?.Join(500);

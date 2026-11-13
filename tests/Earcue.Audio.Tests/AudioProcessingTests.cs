@@ -59,4 +59,20 @@ public class AudioProcessingTests
         byte[] result = converter.ConvertTo16kMonoPcm(dummyData, dummyData.Length);
         Assert.Equal(32000, result.Length);
     }
+
+    [Fact]
+    public void RingBuffer_Clear_ResetsIndicesAndAvailableBytes()
+    {
+        var ringBuffer = new AudioRingBuffer(1024);
+        var input = new byte[] { 10, 20, 30, 40, 50 };
+        ringBuffer.Write(input, 0, input.Length);
+        Assert.Equal(5, ringBuffer.AvailableToRead);
+
+        ringBuffer.Clear();
+        Assert.Equal(0, ringBuffer.AvailableToRead);
+
+        var output = new byte[10];
+        int read = ringBuffer.Read(output, 0, output.Length);
+        Assert.Equal(0, read);
+    }
 }

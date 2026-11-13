@@ -419,14 +419,17 @@ public partial class MainWindow : Window
     {
         Interlocked.Increment(ref _frameCount);
 
-        // 每秒更新一次 UI 指标
-        if (_frameCount % 100 == 0)
+        // 每秒更新一次 UI 指标（仅在控制台可见时更新）
+        if (_frameCount % 100 == 0 && IsVisible)
         {
             var count = _frameCount;
             Dispatcher.BeginInvoke(new Action(() =>
             {
-                var driftMs = Math.Abs((_uptime.Elapsed.TotalSeconds * 100) - count) * 10;
-                TxtSampleCount.Text = $"累计帧数: {count} 帧 (10ms/帧) | 漂移估算: {driftMs:0}ms";
+                if (IsVisible)
+                {
+                    var driftMs = Math.Abs((_uptime.Elapsed.TotalSeconds * 100) - count) * 10;
+                    TxtSampleCount.Text = $"累计帧数: {count} 帧 (10ms/帧) | 漂移估算: {driftMs:0}ms";
+                }
             }));
         }
 
@@ -448,14 +451,20 @@ public partial class MainWindow : Window
                 }
                 else if (item.Text.Length > 0)
                 {
-                    Dispatcher.BeginInvoke(new Action(() =>
+                    // 无论窗口是否可见，都要更新静音检测计时基准
+                    _lastSpeechAt = DateTime.UtcNow;
+
+                    // 仅当主窗口可见时，才唤醒 UI 线程刷新实时 ASR 草稿文本
+                    if (IsVisible)
                     {
-                        if (!Dispatcher.HasShutdownStarted)
+                        Dispatcher.BeginInvoke(new Action(() =>
                         {
-                            TxtLiveAsr.Text = $"[对方] {item.Text}";
-                            _lastSpeechAt = DateTime.UtcNow;
-                        }
-                    }));
+                            if (!Dispatcher.HasShutdownStarted && IsVisible)
+                            {
+                                TxtLiveAsr.Text = $"[对方] {item.Text}";
+                            }
+                        }));
+                    }
                 }
             }
         }
@@ -788,7 +797,7 @@ public partial class MainWindow : Window
         base.OnClosing(e);
     }
 
-    private void RestoreMainWindow()
+    public void RestoreMainWindow()
     {
         Dispatcher.Invoke(() =>
         {

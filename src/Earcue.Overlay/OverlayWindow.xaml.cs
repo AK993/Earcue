@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -116,10 +117,46 @@ public partial class OverlayWindow : Window
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
     }
 
-    /// <summary>按配置的四角位置与边距定位；若配置了绝对坐标（拖动后）则优先使用绝对坐标。</summary>
+    /// <summary>根据目标坐标动态解析所在显示器的工作区（DIP 逻辑像素），完美支持副屏与多屏边界。</summary>
+    private Rect GetTargetWorkArea(double targetX, double targetY)
+    {
+        var hWnd = new WindowInteropHelper(this).Handle;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var dpiX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
+        var dpiY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
+
+        var hMonitor = IntPtr.Zero;
+        if (hWnd != IntPtr.Zero)
+        {
+            var pt = new NativeMethods.POINT((int)Math.Round(targetX * dpiX), (int)Math.Round(targetY * dpiY));
+            hMonitor = NativeMethods.MonitorFromPoint(pt, NativeMethods.MONITOR_DEFAULTTONEAREST);
+
+            if (hMonitor == IntPtr.Zero)
+            {
+                hMonitor = NativeMethods.MonitorFromWindow(hWnd, NativeMethods.MONITOR_DEFAULTTONEAREST);
+            }
+        }
+
+        if (hMonitor != IntPtr.Zero)
+        {
+            var mi = new NativeMethods.MONITORINFO();
+            mi.cbSize = Marshal.SizeOf(typeof(NativeMethods.MONITORINFO));
+            if (NativeMethods.GetMonitorInfo(hMonitor, ref mi))
+            {
+                return new Rect(
+                    mi.rcWork.Left / dpiX,
+                    mi.rcWork.Top / dpiY,
+                    (mi.rcWork.Right - mi.rcWork.Left) / dpiX,
+                    (mi.rcWork.Bottom - mi.rcWork.Top) / dpiY);
+            }
+        }
+
+        return SystemParameters.WorkArea;
+    }
+
+    /// <summary>按配置的四角位置与边距定位；若配置了绝对坐标（拖动后）则优先使用绝对坐标，并自动适配所在多显示器的工作区。</summary>
     public void Reposition()
     {
-        var workArea = SystemParameters.WorkArea;
         UpdateLayout();
 
         var width = ActualWidth > 0 ? ActualWidth : Width;
@@ -129,14 +166,17 @@ public partial class OverlayWindow : Window
 
         double left;
         double top;
+        Rect workArea;
 
         if (_options.PositionX is { } absoluteX && _options.PositionY is { } absoluteY)
         {
             left = absoluteX;
             top = absoluteY;
+            workArea = GetTargetWorkArea(left, top);
         }
         else
         {
+            workArea = GetTargetWorkArea(Left, Top);
             var corner = OverlayPositionPresets.Find(_options.Position).Id;
             left = corner is OverlayPositionPresets.BottomRight or OverlayPositionPresets.TopRight
                 ? workArea.Right - width - marginX
