@@ -15,7 +15,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('zh', 'bilingual', 'all')]
+    [ValidateSet('zh', 'bilingual', 'paraformer', 'all')]
     [string]$Model = 'zh',
 
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'Earcue\models'),
@@ -34,7 +34,8 @@ if (-not (Test-Path -LiteralPath $manifestPath)) {
 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $selected = switch ($Model) {
     'zh'        { @($manifest | Where-Object { $_.id -like '*zh-14M*' }) }
-    'bilingual' { @($manifest | Where-Object { $_.id -like '*bilingual*' }) }
+    'bilingual' { @($manifest | Where-Object { $_.id -like '*zipformer-bilingual*' }) }
+    'paraformer' { @($manifest | Where-Object { $_.modelType -eq 'Paraformer' }) }
     'all'       { @($manifest) }
 }
 
@@ -52,10 +53,50 @@ $tar = Get-Command tar.exe -ErrorAction SilentlyContinue
 foreach ($entry in $selected) {
     $id = [string]$entry.id
     $dest = Join-Path $InstallRoot $id
-    $tokens = Join-Path $dest 'tokens.txt'
-    $existingEncoders = @(Get-ChildItem -LiteralPath $dest -Filter 'encoder*.onnx' -File -ErrorAction SilentlyContinue)
+    $absoluteRoot = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\', '/')
+    $absoluteDest = [IO.Path]::GetFullPath($dest)
+    if ([IO.Path]::GetDirectoryName($absoluteDest) -ne $absoluteRoot) {
+        throw "模型目录超出安装根目录：$absoluteDest"
+    }
 
-    if (-not $Force -and (Test-Path -LiteralPath $tokens) -and $existingEncoders.Count -gt 0) {
+    # INT8 Paraformer 直接下载固定版本的必要文件，避免附带数百 MB 的 FP32 权重。
+    if ($entry.files -and $entry.files.Count -gt 0) {
+        foreach ($file in $entry.files) {
+            if ($file.sha256 -notmatch '^[0-9a-fA-F]{64}$') { throw "文件缺少 SHA256：$($file.path)" }
+            $target = [IO.Path]::GetFullPath((Join-Path $absoluteDest $file.path))
+            if (-not $target.StartsWith($absoluteDest + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "文件路径超出模型目录：$target"
+            }
+            if (-not $Force -and (Test-Path -LiteralPath $target) -and (Get-FileHash -LiteralPath $target).Hash -ieq $file.sha256) {
+                Write-Host "[skip] 已校验：$($file.path)"
+                continue
+            }
+            New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($target)) -Force | Out-Null
+            $partial = $target + '.part'
+            Write-Host "[download] $($entry.displayName) / $($file.path)"
+            if ($curl) {
+                & $curl.Source -L -C - --fail --retry 3 --connect-timeout 20 -o $partial $file.url
+                if ($LASTEXITCODE -ne 0) { throw "下载失败：$($file.path)（curl exit $LASTEXITCODE）" }
+            } else {
+                Invoke-WebRequest -Uri $file.url -OutFile $partial -UseBasicParsing
+            }
+            if ((Get-FileHash -LiteralPath $partial).Hash -ine $file.sha256) {
+                Remove-Item -LiteralPath $partial -Force
+                throw "SHA256 校验失败：$($file.path)"
+            }
+            Move-Item -LiteralPath $partial -Destination $target -Force
+            Write-Host "[verify] $($file.path) SHA256 校验通过" -ForegroundColor Green
+        }
+        continue
+    }
+    $tokens = Join-Path $dest 'tokens.txt'
+    $requiredPrefixes = @('encoder', 'decoder', 'joiner')
+    $installed = Test-Path -LiteralPath $tokens
+    foreach ($prefix in $requiredPrefixes) {
+        if (@(Get-ChildItem -LiteralPath $dest -Filter "$prefix*.onnx" -File -ErrorAction SilentlyContinue).Count -eq 0) { $installed = $false }
+    }
+
+    if (-not $Force -and $installed) {
         Write-Host "[skip] 已安装: $id" -ForegroundColor DarkGray
         continue
     }

@@ -15,7 +15,6 @@ public partial class OverlayWindow : Window
 {
     private readonly DispatcherTimer _fadeoutTimer;
     private OverlayOptions _options = new();
-    private double _targetOpacity = 0.92;
     private int _fadeGeneration;
     private bool _autoHideEnabled;
     private bool _editMode;
@@ -38,13 +37,10 @@ public partial class OverlayWindow : Window
 
     public bool IsEditMode => _editMode;
 
-    private double EffectiveOpacity => _editMode ? Math.Max(_targetOpacity, 0.45) : _targetOpacity;
-
     /// <summary>应用透明度、位置、字体、字号、颜色、捕获排除等外观设置；可在运行中重复调用。</summary>
     public void Configure(OverlayOptions options)
     {
         _options = options ?? new OverlayOptions();
-        _targetOpacity = Math.Clamp(_options.Opacity, 0.05, 1.0);
         _autoHideEnabled = _options.AutoHide;
         _fadeoutTimer.Interval = TimeSpan.FromSeconds(
             _options.AutoFadeoutSeconds > 0 ? _options.AutoFadeoutSeconds : 20);
@@ -70,7 +66,7 @@ public partial class OverlayWindow : Window
             if (Visibility == Visibility.Visible)
             {
                 BeginAnimation(OpacityProperty, null);
-                Opacity = EffectiveOpacity;
+                Opacity = 1;
             }
         }
     }
@@ -209,7 +205,7 @@ public partial class OverlayWindow : Window
                 _fadeoutTimer.Stop();
                 Visibility = Visibility.Visible;
                 BeginAnimation(OpacityProperty, null);
-                Opacity = EffectiveOpacity;
+                Opacity = 1;
 
                 if (string.IsNullOrWhiteSpace(TxtAnswer.Text))
                 {
@@ -223,7 +219,7 @@ public partial class OverlayWindow : Window
             else
             {
                 BeginAnimation(OpacityProperty, null);
-                Opacity = _targetOpacity;
+                Opacity = 1;
                 if (_autoHideEnabled)
                 {
                     RestartAutoHideTimer();
@@ -254,7 +250,7 @@ public partial class OverlayWindow : Window
 
             // 取消上一次淡出动画，确保卡片一定能重新出现
             BeginAnimation(OpacityProperty, null);
-            var target = EffectiveOpacity;
+            const double target = 1;
             var from = wasHidden ? 0.0 : Math.Min(Math.Max(Opacity, 0.01), target);
             Opacity = from;
             var fadeIn = new DoubleAnimation(from, target, TimeSpan.FromMilliseconds(150));
@@ -412,6 +408,8 @@ public partial class OverlayWindow : Window
 
     private void ApplyAppearance()
     {
+        BackgroundLayer.Opacity = _options.BackgroundOpacity;
+        TextLayer.Opacity = _options.TextOpacity;
         var family = ResolveFontFamily(_options.FontFamily);
         FontFamily = family;
 

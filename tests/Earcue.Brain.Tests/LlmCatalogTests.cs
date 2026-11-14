@@ -177,11 +177,12 @@ public class LlmCatalogTests
     }
 
     [Fact]
-    public async Task TestChat_SendsNonStreamingRequestAndExtractsReply()
+    public async Task TestChat_UsesProductionStreamingClientAndExtractsReply()
     {
-        var handler = new StubHandler(_ => Json(HttpStatusCode.OK, """
-            { "choices": [ { "message": { "role": "assistant", "content": "连接正常" } } ] }
-            """));
+        var handler = new StubHandler(_ => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("data: {\"choices\":[{\"delta\":{\"content\":\"连接正常\"}}]}\n\ndata: [DONE]\n\n", Encoding.UTF8, "text/event-stream")
+        });
 
         using var client = new HttpClient(handler);
         using var catalog = new OpenAiCompatibleModelCatalog(client);
@@ -192,12 +193,13 @@ public class LlmCatalogTests
         Assert.Equal("连接正常", result.Reply);
         Assert.Equal("https://api.example.com/v1/chat/completions", handler.RequestUrls[0]);
         Assert.Contains("\"model\":\"deepseek-chat\"", handler.RequestBodies[0]);
-        Assert.Contains("\"stream\":false", handler.RequestBodies[0]);
+        Assert.Contains("\"stream\":true", handler.RequestBodies[0]);
+        Assert.NotNull(result.FirstTextMs);
         Assert.Equal("sk-key", handler.BearerTokens[0]);
     }
 
     [Fact]
-    public async Task TestChat_ReportsServerErrorBody()
+    public async Task TestChat_ReportsSameSanitizedHttpFailureAsProduction()
     {
         var handler = new StubHandler(_ => Json(
             HttpStatusCode.BadRequest,
@@ -210,7 +212,7 @@ public class LlmCatalogTests
 
         Assert.False(result.IsSuccess);
         Assert.Contains("400", result.Message);
-        Assert.Contains("model does not exist", result.Message);
+        Assert.Contains("所选模型", result.Message);
     }
 
     private static HttpResponseMessage Json(HttpStatusCode status, string json) => new(status)

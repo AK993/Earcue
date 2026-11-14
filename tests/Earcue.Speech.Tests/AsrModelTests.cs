@@ -17,7 +17,7 @@ public class AsrModelTests : IDisposable
     public void Catalog_LoadsOfficialModelsWithChecksums()
     {
         var all = AsrModelCatalog.All;
-        Assert.True(all.Count >= 2, "模型清单应至少包含中文与中英双语两个模型");
+        Assert.Equal(3, all.Count);
 
         var zh = AsrModelCatalog.Find("sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23");
         Assert.NotNull(zh);
@@ -25,6 +25,19 @@ public class AsrModelTests : IDisposable
         Assert.Equal(64, zh.Sha256.Length);
         Assert.True(zh.SizeBytes > 0);
         Assert.Contains("中文", zh.DisplayName);
+        Assert.Equal(AsrModelType.Transducer, zh.ModelType);
+
+        var paraformer = AsrModelCatalog.Find("sherpa-onnx-streaming-paraformer-bilingual-zh-en");
+        Assert.NotNull(paraformer);
+        Assert.Equal(AsrModelType.Paraformer, paraformer!.ModelType);
+        Assert.Equal(4, paraformer.Files.Count);
+        Assert.Equal(paraformer.SizeBytes, paraformer.Files.Sum(file => file.SizeBytes));
+        Assert.All(paraformer.Files, file =>
+        {
+            Assert.Equal(64, file.Sha256.Length);
+            Assert.StartsWith("https://huggingface.co/csukuangfj/", file.Url);
+            Assert.True(file.SizeBytes > 0);
+        });
     }
 
     [Fact]
@@ -151,6 +164,43 @@ public class AsrModelTests : IDisposable
         File.WriteAllText(files.Tokens, "<blk> 0\n");
 
         Assert.True(files.IsComplete);
+    }
+
+    [Fact]
+    public void Paraformer_LocatesQuantizedModelWithoutJoiner()
+    {
+        const string id = "sherpa-onnx-streaming-paraformer-bilingual-zh-en";
+        var dir = Path.Combine(_tempRoot, id);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "tokens.txt"), "<blank> 0\n");
+        File.WriteAllBytes(Path.Combine(dir, "encoder.int8.onnx"), new byte[] { 1 });
+        File.WriteAllBytes(Path.Combine(dir, "decoder.int8.onnx"), new byte[] { 2 });
+
+        Assert.True(AsrModelLocator.TryLocate(id, _tempRoot, true, out var files, out var error), error);
+        Assert.Equal(AsrModelType.Paraformer, files!.ModelType);
+        Assert.True(files.IsComplete);
+        Assert.True(files.IsInt8);
+        Assert.Equal(string.Empty, files.Joiner);
+
+        File.Delete(files.Decoder);
+        Assert.False(files.IsComplete);
+        Assert.False(AsrModelLocator.TryLocate(id, _tempRoot, true, out _, out error));
+        Assert.Contains("decoder", error);
+        Assert.DoesNotContain("joiner", error);
+    }
+
+    [Fact]
+    public void Zipformer_StillRequiresJoiner()
+    {
+        const string id = "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20";
+        var dir = Path.Combine(_tempRoot, id);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "tokens.txt"), "<blk> 0\n");
+        File.WriteAllBytes(Path.Combine(dir, "encoder.int8.onnx"), new byte[] { 1 });
+        File.WriteAllBytes(Path.Combine(dir, "decoder.int8.onnx"), new byte[] { 2 });
+
+        Assert.False(AsrModelLocator.TryLocate(id, _tempRoot, true, out _, out var error));
+        Assert.Contains("joiner", error);
     }
 
     public void Dispose()

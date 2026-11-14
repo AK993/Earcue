@@ -17,30 +17,34 @@
     </Window.Resources>
     
     <Grid Margin="16">
-        <!-- Main Card Container -->
-        <Border x:Name="CardBorder"
-                Background="#D012161F"
-                CornerRadius="12"
-                BorderBrush="#30FFFFFF"
+        <!-- Independent background and text layers; window opacity is reserved for fade animations. -->
+        <Border x:Name="BackgroundLayer"
+                Background="#173428"
+                CornerRadius="16"
+                BorderBrush="#405D7E63"
                 BorderThickness="1"
-                Padding="16,14"
-                MouseLeftButtonDown="Card_MouseLeftButtonDown">
+                IsHitTestVisible="False">
             <Border.Effect>
-                <DropShadowEffect BlurRadius="18" ShadowDepth="4" Direction="270" Color="#000000" Opacity="0.45"/>
+                <DropShadowEffect BlurRadius="22" ShadowDepth="5" Direction="270" Color="#10271A" Opacity="0.28"/>
             </Border.Effect>
-            
-            <StackPanel Orientation="Vertical">
+        </Border>
+        <Border x:Name="CardBorder"
+                Background="Transparent"
+                CornerRadius="16"
+                Padding="20,17"
+                MouseLeftButtonDown="Card_MouseLeftButtonDown">
+            <StackPanel x:Name="TextLayer" Orientation="Vertical">
                 <!-- Header with App Mark and Status -->
                 <Grid Margin="0,0,0,6">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Border Width="6" Height="6" CornerRadius="3" Background="#00E676" Margin="0,0,6,0"/>
-                        <TextBlock Text="附耳 Earcue" Foreground="#88FFFFFF" FontSize="11" FontWeight="SemiBold"/>
+                        <Border Width="5" Height="5" CornerRadius="2.5" Background="#95DCAE" Margin="0,0,7,0"/>
+                        <TextBlock Text="附耳 · 回答建议" Foreground="#A3C6AE" FontSize="10" FontWeight="SemiBold"/>
                     </StackPanel>
                     
                     <TextBlock x:Name="TxtLatency"
                                Text="1.2s"
                                HorizontalAlignment="Right"
-                               Foreground="#66FFFFFF"
+                               Foreground="#789287"
                                FontSize="10"
                                VerticalAlignment="Center"/>
                 </Grid>
@@ -48,7 +52,7 @@
                 <!-- Heard Question -->
                 <TextBlock x:Name="TxtQuestion"
                            Text="[对方] 灰度策略怎么保证回滚？"
-                           Foreground="#A0B0C0"
+                           Foreground="#AAC7B3"
                            FontSize="13"
                            TextWrapping="Wrap"
                            MaxHeight="48"
@@ -61,7 +65,7 @@
                            Text="按 5% 分批，每批观察 30 分钟，异常率超 1% 立即回滚上一版本"
                            Foreground="#00F0FF"
                            FontSize="15"
-                           FontWeight="Bold"
+                           FontWeight="Medium"
                            LineHeight="22"
                            TextWrapping="Wrap"
                            MaxHeight="72"
@@ -72,7 +76,7 @@
 
         <!-- Edit mode chrome -->
         <Rectangle x:Name="EditBorder"
-                   Stroke="#38BDF8"
+                   Stroke="#95DCAE"
                    StrokeThickness="1.5"
                    StrokeDashArray="4 3"
                    RadiusX="12"
@@ -92,7 +96,7 @@
                DragCompleted="ResizeGrip_DragCompleted">
             <Thumb.Template>
                 <ControlTemplate TargetType="Thumb">
-                    <Border Background="#38BDF8" CornerRadius="4">
+                    <Border Background="#95DCAE" CornerRadius="5">
                         <Path Data="M 4 14 L 14 4 M 9 14 L 14 9"
                               Stroke="#0F141C"
                               StrokeThickness="1.5"

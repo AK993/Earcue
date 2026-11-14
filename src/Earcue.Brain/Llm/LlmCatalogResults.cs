@@ -27,6 +27,7 @@ public sealed class LlmProbeResult
     public string Reply { get; init; } = string.Empty;
 
     public long LatencyMs { get; init; }
+    public long? FirstTextMs { get; init; }
 
     public string? Endpoint { get; init; }
 }

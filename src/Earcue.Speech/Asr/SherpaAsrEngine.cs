@@ -9,7 +9,7 @@ using SherpaOnnx;
 namespace Earcue.Speech.Asr;
 
 /// <summary>
-/// 基于 sherpa-onnx 的本地流式 Zipformer 识别引擎。
+/// 基于 sherpa-onnx 的本地流式 Zipformer / Paraformer 识别引擎。
 /// 输入固定为 16kHz / 单声道 / 16-bit PCM 的 10ms 帧，输出当前句子的累计文本：
 /// <see cref="AsrPartial.IsFinal"/> = false 表示实时草稿，true 表示端点已结束、可以作为一句完整话处理。
 /// 端点规则由 <see cref="SegmentOptions"/> 映射：SilenceMs 控制句末静音，MaxMs 控制最长句长。
@@ -66,9 +66,17 @@ public sealed class SherpaAsrEngine : IAsrEngine
         config.FeatConfig.SampleRate = SampleRate;
         config.FeatConfig.FeatureDim = 80;
 
-        config.ModelConfig.Transducer.Encoder = files.Encoder;
-        config.ModelConfig.Transducer.Decoder = files.Decoder;
-        config.ModelConfig.Transducer.Joiner = files.Joiner;
+        if (files.ModelType == AsrModelType.Paraformer)
+        {
+            config.ModelConfig.Paraformer.Encoder = files.Encoder;
+            config.ModelConfig.Paraformer.Decoder = files.Decoder;
+        }
+        else
+        {
+            config.ModelConfig.Transducer.Encoder = files.Encoder;
+            config.ModelConfig.Transducer.Decoder = files.Decoder;
+            config.ModelConfig.Transducer.Joiner = files.Joiner;
+        }
         config.ModelConfig.Tokens = files.Tokens;
         config.ModelConfig.Provider = "cpu";
         config.ModelConfig.NumThreads = Math.Clamp(options.NumThreads, 1, 8);

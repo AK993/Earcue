@@ -5,11 +5,13 @@ using System.Windows.Threading;
 using Earcue.Audio.Sources;
 using Earcue.Brain.Context;
 using Earcue.Brain.Llm;
+using Earcue.Brain.Understanding;
 using Earcue.Core.Configuration;
 using Earcue.Core.Logging;
 using Earcue.Core.Models;
 using Earcue.Overlay;
 using Earcue.Speech.Asr;
+using Earcue.Speech.Vad;
 using Forms = System.Windows.Forms;
 
 namespace Earcue.App;
@@ -30,29 +32,46 @@ public partial class MainWindow : Window
     private bool _hasShownMinimizeTip;
 
     private long _frameCount = 0;
-    private bool _asrErrorLogged;
+    private int _asrFailed;
+    private readonly AutoAnswerGate _answerGate = new();
     private bool _missingKeyNotified;
     private bool _isClosing;
+    private bool _isStartingCapture;
     private bool _overlayEditMode;
     private DateTime _captureWallStart;
-    private DateTime _lastSpeechAt;
     private DateTime _lastAnswerAt = DateTime.MinValue;
     private int _pendingChars;
+    private readonly PendingSpeechBuffer _pendingSpeech = new();
+    private bool _autoAnswerPausedAfterError;
+    private bool _autoAnswerPausedByUser;
+    private int _captureSessionId;
+    private AnswerCardView? _activeAnswerCard;
+    private const int MaxHistoryCards = 100;
+    private const int MaxTranscriptChars = 100_000;
     private string _latestSentence = string.Empty;
     private bool _isAnswering;
     private CancellationTokenSource? _answerCts;
+    private ContinuousAnswerRetry _answerRetry = new();
+    private string? _answerRetryStatus;
     private readonly System.Diagnostics.Stopwatch _uptime = new();
+    private sealed record AnswerRequest(string SourceText, bool Automatic, int CaptureSession,
+        PendingSpeechSnapshot? Pending, IReadOnlyList<DialogueTurn> Context, string? QuestionOverride = null);
 
     public MainWindow()
     {
         InitializeComponent();
+        var workArea = SystemParameters.WorkArea;
+        MinWidth = Math.Min(MinWidth, Math.Max(760, workArea.Width - 32));
+        MinHeight = Math.Min(MinHeight, Math.Max(520, workArea.Height - 32));
+        Width = Math.Min(Width, workArea.Width - 32);
+        Height = Math.Min(Height, workArea.Height - 32);
 
         AppLogger.Initialize();
         AppLogger.Instance.Information("Earcue 应用程序主窗口初始化开始");
 
         // 加载或初始化配置
         _configPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
-        _config = EarcueConfig.LoadFromFile(_configPath);
+        _config = EarcueConfig.LoadFromFile(_configPath, out var configWarning);
         if (!_config.Llm.TryLoadApiKey() && !LlmEndpoints.IsLoopback(_config.Llm.BaseUrl))
         {
             AppLogger.Instance.Warning("未找到可用的 LLM API Key，请在【模型设置】中配置");
@@ -76,8 +95,14 @@ public partial class MainWindow : Window
 
         RefreshLlmUi();
         RefreshProfileUi();
+        TxtAsrModel.Text = AsrModelCatalog.Find(_config.Asr.LoopbackModel)?.DisplayName ?? _config.Asr.LoopbackModel;
+        RefreshOverlayStatus();
+        RefreshAnswerState();
 
         InitializeTrayIcon();
+
+        if (configWarning is not null)
+            AppendTranscript($"[系统] {configWarning}");
 
         System.Windows.Application.Current.SessionEnding += (s, e) =>
         {
@@ -86,6 +111,11 @@ public partial class MainWindow : Window
 
         AppLogger.Instance.Information("Earcue 应用程序主窗口初始化完成");
     }
+
+    private System.Windows.Media.Brush UiBrush(string key) => (System.Windows.Media.Brush)FindResource(key);
+
+    private void RefreshOverlayStatus() => TxtOverlayStatus.Text = _config.Overlay.ExcludeFromCapture
+        ? "字幕卡已启用共享捕获排除" : "字幕卡允许被屏幕捕获";
 
     /// <summary>把当前面试角色 / 简历长度同步到入口按钮的提示。</summary>
     private void RefreshProfileUi()
@@ -136,7 +166,7 @@ public partial class MainWindow : Window
         _overlayEditMode = enabled;
         _overlayManager.SetEditMode(enabled);
 
-        BtnEditOverlay.Content = enabled ? "✅ 完成" : "🖱 调整";
+        BtnEditOverlay.Content = enabled ? "完成调整" : "调整位置";
         BtnEditOverlay.ToolTip = enabled
             ? "退出调整模式，恢复点击穿透"
             : "打开后可以鼠标拖动/缩放字幕卡";
@@ -187,22 +217,22 @@ public partial class MainWindow : Window
         if (keyLoaded)
         {
             TxtLlmKeyStatus.Text = $"API Key: {_config.Llm.MaskedApiKey} · 回答长度不限";
-            TxtLlmKeyStatus.Foreground = System.Windows.Media.Brushes.LightGreen;
+            TxtLlmKeyStatus.Foreground = UiBrush("SuccessBrush");
         }
         else if (_config.Llm.HasApiKey)
         {
             TxtLlmKeyStatus.Text = "API Key: 已加密保存但无法解密，请重新填写";
-            TxtLlmKeyStatus.Foreground = System.Windows.Media.Brushes.Orange;
+            TxtLlmKeyStatus.Foreground = UiBrush("WarningBrush");
         }
         else if (LlmEndpoints.IsLoopback(_config.Llm.BaseUrl))
         {
             TxtLlmKeyStatus.Text = "API Key: 未配置（本地服务可留空）";
-            TxtLlmKeyStatus.Foreground = System.Windows.Media.Brushes.Gray;
+            TxtLlmKeyStatus.Foreground = UiBrush("SubtleBrush");
         }
         else
         {
             TxtLlmKeyStatus.Text = "API Key: 未配置，点击【设置】";
-            TxtLlmKeyStatus.Foreground = System.Windows.Media.Brushes.Orange;
+            TxtLlmKeyStatus.Foreground = UiBrush("WarningBrush");
         }
     }
 
@@ -249,8 +279,12 @@ public partial class MainWindow : Window
         // 用新配置重建客户端、立即套用字幕卡外观
         _llmClient = new OpenAiCompatibleLlmClient(_config.Llm);
         _overlayManager.UpdateOptions(_config.Overlay);
+        RefreshOverlayStatus();
         _missingKeyNotified = false;
+        _autoAnswerPausedAfterError = false;
+        _autoAnswerPausedByUser = false;
         RefreshLlmUi();
+        RefreshAnswerState();
 
         var keyState = _config.Llm.HasApiKey ? $"API Key {_config.Llm.MaskedApiKey}" : "未配置 API Key";
         var autoState = _config.AutoAnswer.Enabled
@@ -261,8 +295,11 @@ public partial class MainWindow : Window
         var asrModelName = AsrModelCatalog.Find(_config.Asr.LoopbackModel)?.DisplayName ?? _config.Asr.LoopbackModel;
         if (asrModelChanged)
         {
-            TxtAsrModel.Text = $"ASR: {asrModelName}";
-            AppendTranscript($"[系统] ASR 语音模型已切换为：{asrModelName}（下一次启动采集时生效）");
+            var runningName = _asrEngine is null ? null : AsrModelCatalog.Find(_asrEngine.ModelId)?.DisplayName;
+            TxtAsrModel.Text = runningName is null
+                ? $"ASR: 已选择 {asrModelName}"
+                : $"ASR: {runningName}（待切换：{asrModelName}）";
+            AppendTranscript($"[系统] 已选择 ASR 模型：{asrModelName}。下次启动采集时生效，无需重启程序。");
         }
 
         AppendTranscript($"[系统] 设置已更新：{_config.Llm.Model} · {keyState} · {autoState} · ASR: {asrModelName}");
@@ -278,6 +315,8 @@ public partial class MainWindow : Window
 
     private async void BtnToggleCapture_Click(object sender, RoutedEventArgs e)
     {
+        // 托盘可以直接调用此方法，不能只依赖按钮的 IsEnabled。
+        if (_isClosing || _isStartingCapture) return;
         if (_loopbackSource != null && _loopbackSource.IsRunning)
         {
             StopCaptureAndFlush();
@@ -290,9 +329,12 @@ public partial class MainWindow : Window
             SetOverlayEditMode(false);
         }
 
+        var recovering = CaptureErrorBanner.Visibility == Visibility.Visible;
+        _isStartingCapture = true;
         BtnToggleCapture.IsEnabled = false;
-        TxtAudioStatus.Text = "状态: 正在加载本地 ASR 模型…";
-        TxtAudioStatus.Foreground = System.Windows.Media.Brushes.Gold;
+        BtnRetryCapture.IsEnabled = false;
+        TxtAudioStatus.Text = "正在加载语音模型…";
+        TxtAudioStatus.Foreground = UiBrush("WarningBrush");
 
         try
         {
@@ -311,34 +353,45 @@ public partial class MainWindow : Window
             }
 
             _asrEngine = loaded.Engine;
-            _asrErrorLogged = false;
-            TxtAsrModel.Foreground = System.Windows.Media.Brushes.LightGray;
+            Interlocked.Exchange(ref _asrFailed, 0);
+            TxtAsrModel.Foreground = UiBrush("InkBrush");
 
             var model = AsrModelCatalog.Find(_asrEngine.ModelId);
-            TxtAsrModel.Text =
-                $"ASR: {model?.DisplayName ?? _asrEngine.ModelId} · " +
-                $"{(_asrEngine.Files.IsInt8 ? "int8" : "float")} · {loaded.ElapsedMs}ms";
-            TxtAsrModel.ToolTip = _asrEngine.Files.ModelDirectory;
+            TxtAsrModel.Text = model?.DisplayName ?? _asrEngine.ModelId;
+            TxtAsrModel.ToolTip = $"{_asrEngine.Files.ModelDirectory}\n加载耗时 {loaded.ElapsedMs}ms";
 
             AppendTranscript(
                 $"[系统] 本地 ASR 已加载：{_asrEngine.ModelId} · {_asrEngine.Files.EncoderFileName} · {loaded.ElapsedMs}ms");
 
-            _loopbackSource = new WasapiLoopbackSource();
-            _loopbackSource.FrameReady += OnAudioFrameReady;
+            var source = new WasapiLoopbackSource();
+            _loopbackSource = source;
+            source.FrameReady += frame => OnAudioFrameReady(source, frame);
+            source.StatusChanged += status => OnCaptureStatusChanged(source, status);
+            source.CaptureFailed += error => OnCaptureFailed(source, error);
             _captureWallStart = DateTime.UtcNow;
-            _lastSpeechAt = DateTime.UtcNow;
-            _lastAnswerAt = DateTime.MinValue;
-            _pendingChars = 0;
-            _latestSentence = string.Empty;
+            _answerGate.Reset(DateTime.UtcNow);
+            _captureSessionId++;
+            if (!recovering)
+            {
+                _lastAnswerAt = DateTime.MinValue;
+                _pendingChars = 0;
+                _pendingSpeech.Clear();
+                _autoAnswerPausedAfterError = false;
+                _autoAnswerPausedByUser = false;
+                _contextBuffer.Clear();
+                _latestSentence = string.Empty;
+            }
             _loopbackSource.Start();
             _uptime.Restart();
             _frameCount = 0;
             _autoAnswerTimer.Start();
 
-            BtnToggleCapture.Content = "⏹ 停止采集与识别";
-            TxtAudioStatus.Text = "状态: 正在监听并识别系统声音 (16kHz Mono)";
-            TxtAudioStatus.Foreground = System.Windows.Media.Brushes.LightGreen;
+            BtnToggleCapture.Content = "停止聆听";
+            TxtAudioStatus.Text = "正在聆听";
+            TxtAudioStatus.Foreground = UiBrush("SuccessBrush");
+            CaptureErrorBanner.Visibility = Visibility.Collapsed;
             AppendTranscript("[系统] WASAPI 环回采集已启动，本地 ASR 正在识别会议音频...");
+            if (recovering) AppendTranscript("[系统] 已恢复聆听，继续使用故障前的对话上下文和待回答内容。");
             var autoHint = _config.AutoAnswer.Enabled
                 ? $"静音 {_config.AutoAnswer.SilenceMs / 1000.0:0.0}s 后自动把最近内容发给大模型"
                 : "自动应答当前关闭（可在【模型设置】中开启）";
@@ -351,10 +404,11 @@ public partial class MainWindow : Window
             _loopbackSource?.Dispose();
             _loopbackSource = null;
 
-            TxtAsrModel.Text = "ASR: 加载失败";
-            TxtAsrModel.Foreground = System.Windows.Media.Brushes.Orange;
-            TxtAudioStatus.Text = "状态: 启动失败";
-            TxtAudioStatus.Foreground = System.Windows.Media.Brushes.Orange;
+            TxtAsrModel.Text = "识别引擎加载失败";
+            TxtAsrModel.Foreground = UiBrush("WarningBrush");
+            TxtAudioStatus.Text = "启动失败";
+            TxtAudioStatus.Foreground = UiBrush("WarningBrush");
+            ShowCaptureError("启动失败，请检查音频设备或语音模型后重试。");
 
             var message = ex is FileNotFoundException
                 ? $"{ex.Message}\n\n下载命令：\n  powershell -ExecutionPolicy Bypass -File tools\\download-asr-models.ps1"
@@ -364,32 +418,88 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _isStartingCapture = false;
             BtnToggleCapture.IsEnabled = true;
+            BtnRetryCapture.IsEnabled = true;
+            RefreshAnswerState();
         }
     }
 
-    private void StopCaptureAndFlush()
+    private void OnCaptureStatusChanged(WasapiLoopbackSource source, string status)
+    {
+        if (_isClosing || Dispatcher.HasShutdownStarted) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_isClosing || source != _loopbackSource) return;
+            TxtAudioStatus.Text = $"{status}";
+            RefreshAnswerState();
+            AppendTranscript($"[系统] {status}");
+        });
+    }
+
+    private void OnCaptureFailed(WasapiLoopbackSource source, Exception error)
+    {
+        if (_isClosing || Dispatcher.HasShutdownStarted) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_isClosing || source != _loopbackSource) return;
+            StopCaptureAndFlush(flush: false);
+            ShowCaptureError("音频采集已断开。检查输出设备后，点击重新开始。");
+            AppendTranscript($"[系统] {error.Message}");
+        });
+    }
+
+    private void StopCaptureAndFlush(bool flush = true)
     {
         _autoAnswerTimer.Stop();
         _answerCts?.Cancel();
+        _captureSessionId++;
 
         _loopbackSource?.Stop();
         _loopbackSource?.Dispose();
         _loopbackSource = null;
         _uptime.Stop();
 
-        FlushAsr();
+        if (flush) FlushAsr();
 
         _asrEngine?.Dispose();
         _asrEngine = null;
         TxtLiveAsr.Text = string.Empty;
-        TxtAsrModel.Text = "ASR: 已停止";
-        TxtAsrModel.Foreground = System.Windows.Media.Brushes.Gray;
+        TxtAsrModel.Text = "识别引擎已停止";
+        TxtAsrModel.Foreground = UiBrush("SubtleBrush");
 
-        BtnToggleCapture.Content = "▶ 启动采集与本地识别";
-        TxtAudioStatus.Text = "状态: 已停止";
-        TxtAudioStatus.Foreground = System.Windows.Media.Brushes.Orange;
+        BtnToggleCapture.Content = "开始聆听";
+        TxtAudioStatus.Text = "已停止";
+        TxtAudioStatus.Foreground = UiBrush("WarningBrush");
         AppendTranscript("[系统] 采集与本地识别已停止。");
+        RefreshAnswerState();
+    }
+
+    private void ShowCaptureError(string message)
+    {
+        TxtCaptureError.Text = message;
+        CaptureErrorBanner.Visibility = Visibility.Visible;
+        TxtAudioStatus.Text = "已停止 · 需要重试";
+        TxtAudioStatus.Foreground = UiBrush("WarningBrush");
+        RefreshAnswerState();
+    }
+
+    private void BtnRetryCapture_Click(object sender, RoutedEventArgs e) => BtnToggleCapture_Click(sender, e);
+
+    private void OnAsrFailed(WasapiLoopbackSource source, Exception error)
+    {
+        if (Interlocked.Exchange(ref _asrFailed, 1) != 0) return;
+        AppLogger.Instance.Error(error, "本地 ASR 处理失败，停止采集并等待用户重试");
+        if (_isClosing || Dispatcher.HasShutdownStarted) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_isClosing || !ReferenceEquals(source, _loopbackSource)) return;
+            StopCaptureAndFlush(flush: false);
+            TxtAsrModel.Text = "识别引擎发生错误";
+            TxtAsrModel.Foreground = UiBrush("WarningBrush");
+            ShowCaptureError("本地语音识别发生错误，已停止聆听。点击重新开始以重新加载模型。");
+            AppendTranscript("[错误] 本地识别已停止，可点击【重新开始】恢复；已识别的文字仍然保留。");
+        });
     }
 
     private void FlushAsr()
@@ -415,8 +525,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnAudioFrameReady(AudioFrame frame)
+    private void OnAudioFrameReady(WasapiLoopbackSource source, AudioFrame frame)
     {
+        if (_isClosing || !ReferenceEquals(source, _loopbackSource) || Volatile.Read(ref _asrFailed) != 0) return;
         Interlocked.Increment(ref _frameCount);
 
         // 每秒更新一次 UI 指标（仅在控制台可见时更新）
@@ -428,7 +539,8 @@ public partial class MainWindow : Window
                 if (IsVisible)
                 {
                     var driftMs = Math.Abs((_uptime.Elapsed.TotalSeconds * 100) - count) * 10;
-                    TxtSampleCount.Text = $"累计帧数: {count} 帧 (10ms/帧) | 漂移估算: {driftMs:0}ms";
+                    TxtSampleCount.Text = "已聆听 " + _uptime.Elapsed.ToString(@"hh\:mm\:ss");
+                    TxtSampleCount.ToolTip = $"累计 {count} 帧 · 漂移估算 {driftMs:0}ms";
                 }
             }));
         }
@@ -441,25 +553,27 @@ public partial class MainWindow : Window
 
         try
         {
+            _answerGate.ObserveAudio(frame, DateTime.UtcNow);
             var events = engine.Process(frame);
             foreach (var partial in events)
             {
                 var item = partial;
+                _answerGate.ObserveRecognition(item.IsFinal, DateTime.UtcNow);
                 if (item.IsFinal)
                 {
-                    Dispatcher.BeginInvoke(new Action(() => OnAsrFinal(item)));
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (!_isClosing && ReferenceEquals(source, _loopbackSource) && Volatile.Read(ref _asrFailed) == 0) OnAsrFinal(item);
+                    }));
                 }
                 else if (item.Text.Length > 0)
                 {
-                    // 无论窗口是否可见，都要更新静音检测计时基准
-                    _lastSpeechAt = DateTime.UtcNow;
-
                     // 仅当主窗口可见时，才唤醒 UI 线程刷新实时 ASR 草稿文本
                     if (IsVisible)
                     {
                         Dispatcher.BeginInvoke(new Action(() =>
                         {
-                            if (!Dispatcher.HasShutdownStarted && IsVisible)
+                            if (!_isClosing && ReferenceEquals(source, _loopbackSource) && !Dispatcher.HasShutdownStarted && IsVisible)
                             {
                                 TxtLiveAsr.Text = $"[对方] {item.Text}";
                             }
@@ -470,11 +584,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            if (!_asrErrorLogged)
-            {
-                _asrErrorLogged = true;
-                AppLogger.Instance.Error(ex, "本地 ASR 处理音频帧失败（后续同类错误不再重复记录）");
-            }
+            OnAsrFailed(source, ex);
         }
     }
 
@@ -489,8 +599,8 @@ public partial class MainWindow : Window
 
         var lagMs = (DateTime.UtcNow - _captureWallStart - partial.EndTime).TotalMilliseconds;
         AppLogger.Instance.Information(
-            "ASR final: {Text} · audio {Start:0.00}-{End:0.00}s · finalLag {Lag:0}ms",
-            partial.Text,
+            "ASR final: chars={Chars} · audio {Start:0.00}-{End:0.00}s · finalLag {Lag:0}ms",
+            partial.Text.Length,
             partial.StartTime.TotalSeconds,
             partial.EndTime.TotalSeconds,
             lagMs);
@@ -510,18 +620,17 @@ public partial class MainWindow : Window
 
         // 不再判断"是不是疑问句"：所有识别内容都进入上下文，静音超时后统一交给大模型
         _latestSentence = sentence;
-        _pendingChars += sentence.Length;
-        _lastSpeechAt = DateTime.UtcNow;
+        _pendingSpeech.Add(sentence);
+        _pendingChars = _pendingSpeech.CharacterCount;
 
-        AppLogger.Instance.Information(
-            "ASR 句子已加入上下文: {Sentence} (待应答字数={Pending})",
-            sentence,
-            _pendingChars);
+        if (_config.Privacy.SaveTranscript)
+            AppLogger.Instance.Information("ASR 转录（已开启保存）: {Sentence}", sentence);
     }
 
     private void OnAutoAnswerTick(object? sender, EventArgs e)
     {
-        if (_isClosing || _isAnswering || _asrEngine is null)
+        if (_isClosing || _isAnswering || _asrEngine is null || _autoAnswerPausedAfterError || _autoAnswerPausedByUser ||
+            Volatile.Read(ref _asrFailed) != 0 || _loopbackSource?.IsRunning != true)
         {
             return;
         }
@@ -538,8 +647,7 @@ public partial class MainWindow : Window
         }
 
         var now = DateTime.UtcNow;
-        var silence = now - _lastSpeechAt;
-        if (silence.TotalMilliseconds < Math.Max(500, options.SilenceMs))
+        if (!_answerGate.CanAnswer(now, options.SilenceMs, out var silence))
         {
             return;
         }
@@ -556,7 +664,6 @@ public partial class MainWindow : Window
         }
 
         var latest = _latestSentence;
-        _pendingChars = 0;
         _lastAnswerAt = now;
 
         _ = GenerateAnswerAsync(latest, auto: true, silence);
@@ -585,6 +692,7 @@ public partial class MainWindow : Window
         {
             _missingKeyNotified = true;
             AppendTranscript("[系统] 未配置模型 API Key，自动应答已暂停；请点击【设置】配置后再试。");
+            RefreshAnswerState();
         }
 
         if (!_config.Llm.TryLoadApiKey())
@@ -600,8 +708,57 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private async Task GenerateAnswerAsync(string latest, bool auto, TimeSpan silence)
+    private void RefreshAnswerState()
     {
+        if (_isClosing || Dispatcher.HasShutdownStarted) return;
+        var paused = _autoAnswerPausedAfterError || _autoAnswerPausedByUser;
+        TxtAutoAnswerStatus.Text = _isAnswering ? _answerRetryStatus ?? "正在生成回答…"
+            : !_config.AutoAnswer.Enabled ? "自动应答已关闭 · 可手动提问"
+            : _autoAnswerPausedAfterError ? "自动应答已暂停 · 回答失败，可重试或恢复"
+            : _autoAnswerPausedByUser ? "自动应答已暂停 · 已停止生成"
+            : _missingKeyNotified ? "自动应答等待模型配置"
+            : _loopbackSource?.IsRunning == true ? "自动应答已开启 · 等待对方说完"
+            : "自动应答等待开始聆听";
+        TxtAutoAnswerStatus.Foreground = UiBrush(paused || _missingKeyNotified || _answerRetryStatus is not null ? "WarningBrush" : "SubtleBrush");
+        BtnResumeAuto.Visibility = paused && _config.AutoAnswer.Enabled ? Visibility.Visible : Visibility.Collapsed;
+        BtnResumeAuto.IsEnabled = !_isAnswering && _loopbackSource?.IsRunning == true;
+        BtnManualAsk.IsEnabled = !_isAnswering;
+        foreach (var view in PanelCards.Children.OfType<AnswerCardView>())
+            view.SetBusy(_isAnswering, _isAnswering && ReferenceEquals(view, _activeAnswerCard));
+    }
+
+    private void BtnResumeAuto_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isAnswering || _loopbackSource?.IsRunning != true || !EnsureLlmReady(userInitiated: true)) return;
+        _autoAnswerPausedAfterError = false;
+        _autoAnswerPausedByUser = false;
+        _lastAnswerAt = DateTime.UtcNow;
+        RefreshAnswerState();
+        AppendTranscript("[系统] 自动应答已恢复，保留的内容会在下一次满足停顿条件后重试。");
+    }
+
+    private void StopAnswer()
+    {
+        if (!_isAnswering) return;
+        _autoAnswerPausedByUser = true;
+        _answerRetryStatus = "正在停止生成与自动重试…";
+        _answerCts?.Cancel();
+        RefreshAnswerState();
+        _activeAnswerCard?.SetStopping();
+    }
+
+    private Task GenerateAnswerAsync(string latest, bool auto, TimeSpan silence)
+    {
+        var pending = auto ? _pendingSpeech.Snapshot() : null;
+        var source = pending is not null && !string.IsNullOrWhiteSpace(pending.Text) ? pending.Text : latest;
+        return GenerateAnswerCoreAsync(new AnswerRequest(source, auto, _captureSessionId,
+            pending, _contextBuffer.GetRecentTurns()), silence);
+    }
+
+    private async Task GenerateAnswerCoreAsync(AnswerRequest request, TimeSpan silence)
+    {
+        var latest = request.SourceText;
+        var auto = request.Automatic;
         if (_isAnswering || !EnsureLlmReady(userInitiated: !auto))
         {
             return;
@@ -609,14 +766,25 @@ public partial class MainWindow : Window
 
         _isAnswering = true;
         _lastAnswerAt = DateTime.UtcNow;
-        if (!auto)
-        {
-            _pendingChars = 0;
-        }
+        var extractQuestion = auto && request.QuestionOverride is null && _config.AutoAnswer.ExtractAndCorrectQuestion;
+        QuestionAnswerStream? preparedStream = null;
+        QuestionExtraction? shownExtraction = null;
+        var shownFallback = false;
+        _autoAnswerPausedAfterError = false;
+        _autoAnswerPausedByUser = false;
+        _answerRetryStatus = null;
 
         _answerCts?.Dispose();
-        _answerCts = new CancellationTokenSource();
-        var token = _answerCts.Token;
+        var requestCts = new CancellationTokenSource();
+        _answerCts = requestCts;
+        var token = requestCts.Token;
+        var answerBuilder = new System.Text.StringBuilder();
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var view = AddAnswerCard(request);
+        _activeAnswerCard = view;
+        view.PrepareQuestion(extractQuestion);
+        view.Update("", extractQuestion ? "正在提取并校正问题…" : "正在思考，等待模型返回…");
+        RefreshAnswerState();
 
         try
         {
@@ -628,8 +796,8 @@ public partial class MainWindow : Window
 
             var card = new CardSuggestion
             {
-                Question = latest,
-                Answer = "思考中...",
+                Question = request.QuestionOverride ?? latest,
+                Answer = extractQuestion ? "正在提取并校正问题…" : "思考中...",
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -638,51 +806,136 @@ public partial class MainWindow : Window
 
             var prompt = new Prompt
             {
-                Mode = auto ? PromptMode.AutoResponse : PromptMode.Question,
+                Mode = auto && request.QuestionOverride is null ? PromptMode.AutoResponse : PromptMode.Question,
                 Role = _config.Profile.RoleValue,
                 UserRoleDescription = _config.Llm.UserRoleDescription,
                 UserStance = _config.Llm.UserStance,
                 ResumeText = _config.Profile.Resume,
                 MaxResumeChars = _config.Profile.MaxResumeChars,
-                RecentContext = _contextBuffer.GetRecentTurns(),
-                TriggerQuestion = latest
+                RecentContext = request.Context,
+                TriggerQuestion = request.QuestionOverride ?? latest,
+                ExtractAndCorrectQuestion = extractQuestion
             };
 
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var answerBuilder = new System.Text.StringBuilder();
+            long? firstTokenMs = null;
+            var retryCount = 0;
             try
             {
-                await foreach (var chunk in _llmClient.AskAsync(prompt, token))
+                await _answerRetry.RunAsync(async (attempt, cancellationToken) =>
                 {
+                    retryCount = attempt;
+                    _answerRetryStatus = attempt > 0 ? $"正在自动重试（第 {attempt} 次）…" : null;
+                    preparedStream = extractQuestion ? new QuestionAnswerStream() : null;
+                    shownExtraction = null;
+                    shownFallback = false;
+                    answerBuilder.Clear();
+                    firstTokenMs = null;
+                    var attemptWatch = System.Diagnostics.Stopwatch.StartNew();
+                    view.PrepareQuestion(extractQuestion);
+                    view.Update("", extractQuestion ? "正在提取并校正问题…" : "正在思考，等待模型返回…");
+                    card.Question = request.QuestionOverride ?? latest;
+                    card.Answer = extractQuestion ? "正在提取并校正问题…" : "思考中...";
+                    if (attempt > 0) _overlayManager.ShowSuggestion(card);
+                    RefreshAnswerState();
+                    await foreach (var chunk in _llmClient.AskAsync(prompt, token))
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (_isClosing || Dispatcher.HasShutdownStarted)
+                        {
+                            requestCts.Cancel();
+                            token.ThrowIfCancellationRequested();
+                        }
+                        if (preparedStream is not null)
+                        {
+                            preparedStream.Push(chunk);
+                            answerBuilder.Clear().Append(preparedStream.Answer);
+                            if (preparedStream.Extraction != shownExtraction || preparedStream.UsedFallback != shownFallback)
+                            {
+                                shownExtraction = preparedStream.Extraction;
+                                shownFallback = preparedStream.UsedFallback;
+                                view.SetQuestionExtraction(shownExtraction, shownFallback);
+                                card.Question = shownExtraction?.Questions.Count > 0 ? shownExtraction.Text : latest;
+                                card.Answer = "正在组织回答…";
+                                _overlayManager.ShowSuggestion(card);
+                            }
+                        }
+                        else answerBuilder.Append(chunk);
+                        var answerText = answerBuilder.ToString();
+                        if (!string.IsNullOrWhiteSpace(answerText))
+                        {
+                            firstTokenMs ??= attemptWatch.ElapsedMilliseconds;
+                            view.Update(answerText, "正在生成… 可随时停止");
+                            _overlayManager.UpdateAnswerStream(answerText);
+                        }
+                    }
                     token.ThrowIfCancellationRequested();
-                    answerBuilder.Append(chunk);
-                    _overlayManager.UpdateAnswerStream(answerBuilder.ToString());
-                }
+                    preparedStream?.Complete();
+                    if (preparedStream is not null)
+                    {
+                        answerBuilder.Clear().Append(preparedStream.Answer);
+                        view.SetQuestionExtraction(preparedStream.Extraction, preparedStream.UsedFallback);
+                    }
+                    if (string.IsNullOrWhiteSpace(answerBuilder.ToString()))
+                        throw new InvalidDataException("模型未返回有效回答。");
+                }, (error, attempt, delay) =>
+                {
+                    if (_isClosing || Dispatcher.HasShutdownStarted) requestCts.Cancel();
+                    token.ThrowIfCancellationRequested();
+                    var message = error is TimeoutException or System.Net.Http.HttpRequestException or InvalidDataException
+                        ? error.Message : "模型请求失败，请检查模型设置。";
+                    _answerRetryStatus = $"回答失败 · {delay.TotalSeconds:0} 秒后自动重试（第 {attempt} 次）";
+                    view.Update(answerBuilder.ToString(), $"{message}\n{delay.TotalSeconds:0} 秒后自动重试（第 {attempt} 次），可点击停止生成。");
+                    _overlayManager.UpdateAnswerStream($"{message}\n{delay.TotalSeconds:0} 秒后自动重试（第 {attempt} 次）");
+                    AppendTranscript($"[重试] {message} {delay.TotalSeconds:0} 秒后进行第 {attempt} 次自动重试。");
+                    var failureStage = error is TimeoutException
+                        ? (error.Message.Contains("首字") ? "first_signal_timeout" : "total_timeout")
+                        : error is InvalidDataException ? "response_format" : "request_failure";
+                    AppLogger.Instance.Warning("模型应答失败，继续自动重试: error={ErrorType}, stage={Stage}, retry={Retry}, delaySeconds={Delay}",
+                        error.GetType().Name, failureStage, attempt, delay.TotalSeconds);
+                    RefreshAnswerState();
+                }, token);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
-                _overlayManager.Hide();
-                AppLogger.Instance.Information("自动应答已取消（采集停止或窗口关闭）");
+                if (!_isClosing && !Dispatcher.HasShutdownStarted)
+                {
+                    _overlayManager.Hide();
+                    if (extractQuestion && shownExtraction is null) view.SetQuestionExtraction(null, true);
+                    view.Update(answerBuilder.ToString(), answerBuilder.Length > 0
+                        ? "已停止 · 已保留生成内容，可重新回答" : "已停止 · 可重新回答");
+                }
+                AppLogger.Instance.Information("模型应答已取消");
                 return;
             }
             catch (Exception ex)
             {
-                AppLogger.Instance.Warning(ex, "流式应答异常");
+                if (_isClosing || Dispatcher.HasShutdownStarted) return;
+                _autoAnswerPausedAfterError = true;
+                if (extractQuestion && shownExtraction is null) view.SetQuestionExtraction(null, true);
+                var message = ex is TimeoutException or System.Net.Http.HttpRequestException or InvalidDataException
+                    ? ex.Message : "模型请求失败，请检查网络与模型设置。";
+                AppLogger.Instance.Warning("模型应答失败: {ErrorType}", ex.GetType().Name);
+                view.Update(answerBuilder.ToString(), $"回答失败：{message} 点击【重新回答】重试。");
+                _overlayManager.UpdateAnswerStream($"回答失败：{message}");
+                AppendTranscript($"[错误] {message} 本次内容已保留；可点击【重新回答】或【恢复自动应答】。");
+                if (auto && string.IsNullOrWhiteSpace(TxtManualQuestion.Text))
+                    TxtManualQuestion.Text = latest;
+                return;
             }
 
             stopwatch.Stop();
             var finalAnswer = answerBuilder.ToString().Trim();
-            if (string.IsNullOrWhiteSpace(finalAnswer))
+
+            if (request.Pending is not null && request.CaptureSession == _captureSessionId)
             {
-                finalAnswer = auto
-                    ? "我先确认一下细节，稍后补充。"
-                    : "这个我不确定，建议跟产品和架构团队确认具体细节。";
-                _overlayManager.UpdateAnswerStream(finalAnswer);
+                _pendingSpeech.Acknowledge(request.Pending);
+                _pendingChars = _pendingSpeech.CharacterCount;
             }
 
             card.Answer = finalAnswer;
             card.LatencyMs = stopwatch.ElapsedMilliseconds;
-            AddCardToHistory(card);
+            var retryLabel = retryCount > 0 ? $" · 重试 {retryCount} 次" : "";
+            view.Update(finalAnswer, $"{DateTime.Now:HH:mm} · 本次首字 {(firstTokenMs ?? stopwatch.ElapsedMilliseconds) / 1000.0:0.0} 秒 · 总计 {card.LatencyMs / 1000.0:0.0} 秒{retryLabel}");
 
             if (auto)
             {
@@ -693,8 +946,11 @@ public partial class MainWindow : Window
         finally
         {
             _isAnswering = false;
-            _answerCts?.Dispose();
-            _answerCts = null;
+            _answerRetryStatus = null;
+            _activeAnswerCard = null;
+            requestCts.Dispose();
+            if (ReferenceEquals(_answerCts, requestCts)) _answerCts = null;
+            RefreshAnswerState();
         }
     }
 
@@ -708,7 +964,6 @@ public partial class MainWindow : Window
         };
 
         _overlayManager.ShowSuggestion(testCard);
-        AddCardToHistory(testCard);
     }
 
     private void BtnManualAsk_Click(object sender, RoutedEventArgs e)
@@ -719,44 +974,23 @@ public partial class MainWindow : Window
         _ = GenerateAnswerAsync(question, auto: false, TimeSpan.Zero);
     }
 
-    private void AddCardToHistory(CardSuggestion card)
+    private AnswerCardView AddAnswerCard(AnswerRequest request)
     {
-        Dispatcher.Invoke(() =>
+        var view = new AnswerCardView(request.SourceText, request.Automatic);
+        if (request.QuestionOverride is not null) view.SetQuestionOverride(request.QuestionOverride);
+        view.StopRequested += StopAnswer;
+        view.RetryRequested += () =>
         {
-            var border = new System.Windows.Controls.Border
-            {
-                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 41, 59)),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(12),
-                Margin = new Thickness(0, 0, 0, 10),
-                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(51, 65, 85)),
-                BorderThickness = new Thickness(1)
-            };
-
-            var sp = new System.Windows.Controls.StackPanel();
-            var txtQ = new System.Windows.Controls.TextBlock
-            {
-                Text = $"[对方] {card.Question}  ({card.LatencyMs / 1000.0:0.0}s)",
-                Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(148, 163, 184)),
-                FontSize = 12,
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 0, 0, 6)
-            };
-            var txtA = new System.Windows.Controls.TextBlock
-            {
-                Text = card.Answer,
-                Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(56, 189, 248)),
-                FontSize = 13,
-                FontWeight = FontWeights.Bold,
-                TextWrapping = TextWrapping.Wrap
-            };
-
-            sp.Children.Add(txtQ);
-            sp.Children.Add(txtA);
-            border.Child = sp;
-
-            PanelCards.Children.Insert(0, border);
-        });
+            if (_isClosing || _isAnswering) return;
+            // Keep the original snapshot: retry can acknowledge it, never later speech.
+            _ = GenerateAnswerCoreAsync(request with { QuestionOverride = view.QuestionForRetry }, TimeSpan.Zero);
+        };
+        PanelCards.Children.Insert(0, view);
+        EmptyCardsState.Visibility = Visibility.Collapsed;
+        while (PanelCards.Children.Count > MaxHistoryCards)
+            PanelCards.Children.RemoveAt(PanelCards.Children.Count - 1);
+        ScrollerCards.ScrollToTop();
+        return view;
     }
 
     private void AppendTranscript(string line)
@@ -764,6 +998,13 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() =>
         {
             TxtTranscript.AppendText($"[{DateTime.Now:HH:mm:ss}] {line}\n");
+            if (TxtTranscript.Text.Length > MaxTranscriptChars)
+            {
+                var text = TxtTranscript.Text;
+                var cut = text.IndexOf('\n', text.Length - MaxTranscriptChars * 3 / 4);
+                TxtTranscript.Text = cut >= 0 ? text[(cut + 1)..] : text[^MaxTranscriptChars..];
+                TxtTranscript.CaretIndex = TxtTranscript.Text.Length;
+            }
             ScrollerTranscript.ScrollToEnd();
         });
     }
@@ -902,6 +1143,7 @@ public partial class MainWindow : Window
 
             contextMenu.Opening += (s, e) =>
             {
+                itemCapture.Enabled = !_isStartingCapture;
                 itemConsole.Text = IsVisible ? "隐藏控制台" : "显示控制台";
                 var isCapturing = _loopbackSource != null && _loopbackSource.IsRunning;
                 itemCapture.Text = isCapturing ? "停止采集与识别" : "开启采集与识别";

@@ -1,94 +1,70 @@
 namespace Earcue.Audio.Processing;
 
-/// <summary>
-/// 高性能音频格式重采样与下混器
-/// 支持将系统原生混音格式（多声道、Float32/PCM16、44.1k/48k等）转换为标准 16kHz 单声道 16-bit PCM
-/// </summary>
+/// <summary>有状态的 PCM/Float 下混与线性重采样器。每个音频流使用一个实例。</summary>
 public sealed class AudioFormatConverter
 {
+    private const int TargetSampleRate = 16000;
     private readonly int _sourceSampleRate;
     private readonly int _sourceChannels;
     private readonly bool _isFloat;
-    private readonly int _targetSampleRate = 16000;
+    private readonly int _blockAlign;
+    private readonly byte[] _pendingBytes;
+    private int _pendingCount;
+    private long _sourceFrames;
+    private long _nextOutputSample;
+    private float _previousSample;
 
     public AudioFormatConverter(int sourceSampleRate, int sourceChannels, bool isFloat)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sourceSampleRate);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sourceChannels);
         _sourceSampleRate = sourceSampleRate;
-        _sourceChannels = Math.Max(1, sourceChannels);
+        _sourceChannels = sourceChannels;
         _isFloat = isFloat;
+        _blockAlign = checked(sourceChannels * (isFloat ? 4 : 2));
+        _pendingBytes = new byte[_blockAlign];
     }
 
-    /// <summary>
-    /// 将原生 WASAPI 缓冲区转换为 16kHz 单声道 16-bit PCM
-    /// </summary>
     public byte[] ConvertTo16kMonoPcm(byte[] sourceBytes, int length)
     {
-        if (length <= 0) return Array.Empty<byte>();
+        ArgumentNullException.ThrowIfNull(sourceBytes);
+        if (length < 0 || length > sourceBytes.Length) throw new ArgumentOutOfRangeException(nameof(length));
+        if (length == 0) return Array.Empty<byte>();
 
-        // 1. 提取单声道浮点样本 [-1.0f, 1.0f]
-        float[] monoSamples;
-
-        if (_isFloat)
+        var data = new byte[_pendingCount + length];
+        _pendingBytes.AsSpan(0, _pendingCount).CopyTo(data);
+        sourceBytes.AsSpan(0, length).CopyTo(data.AsSpan(_pendingCount));
+        var frames = data.Length / _blockAlign;
+        var output = new List<byte>((int)((long)frames * TargetSampleRate / _sourceSampleRate * 2 + 8));
+        for (var frame = 0; frame < frames; frame++)
         {
-            int totalFloatSamples = length / 4;
-            int frames = totalFloatSamples / _sourceChannels;
-            monoSamples = new float[frames];
-
-            for (int f = 0; f < frames; f++)
+            float sum = 0;
+            for (var channel = 0; channel < _sourceChannels; channel++)
             {
-                float sum = 0f;
-                for (int c = 0; c < _sourceChannels; c++)
-                {
-                    int offset = (f * _sourceChannels + c) * 4;
-                    float sample = BitConverter.ToSingle(sourceBytes, offset);
-                    sum += sample;
-                }
-                monoSamples[f] = sum / _sourceChannels;
+                var offset = frame * _blockAlign + channel * (_isFloat ? 4 : 2);
+                sum += _isFloat ? BitConverter.ToSingle(data, offset) : BitConverter.ToInt16(data, offset) / 32768f;
             }
-        }
-        else
-        {
-            // 假设 16-bit PCM
-            int totalShortSamples = length / 2;
-            int frames = totalShortSamples / _sourceChannels;
-            monoSamples = new float[frames];
+            var sample = sum / _sourceChannels;
+            if (!float.IsFinite(sample)) sample = 0;
 
-            for (int f = 0; f < frames; f++)
+            // 使用全流整数相位，避免每个数据块独立 Floor 导致持续丢样。
+            // 前后两个源采样点跨调用保留，数据分块方式不影响输出内容。
+            while (_nextOutputSample * _sourceSampleRate <= _sourceFrames * TargetSampleRate)
             {
-                float sum = 0f;
-                for (int c = 0; c < _sourceChannels; c++)
-                {
-                    int offset = (f * _sourceChannels + c) * 2;
-                    short sample = (short)(sourceBytes[offset] | (sourceBytes[offset + 1] << 8));
-                    sum += sample / 32768.0f;
-                }
-                monoSamples[f] = sum / _sourceChannels;
+                var fraction = (_nextOutputSample * _sourceSampleRate - (_sourceFrames - 1) * TargetSampleRate)
+                    / (double)TargetSampleRate;
+                var value = _sourceFrames == 0 ? sample : _previousSample + (sample - _previousSample) * fraction;
+                var pcm = (short)Math.Round(Math.Clamp(value, -1, 1) * 32767);
+                output.Add((byte)(pcm & 0xff));
+                output.Add((byte)((pcm >> 8) & 0xff));
+                _nextOutputSample++;
             }
+            _previousSample = sample;
+            _sourceFrames++;
         }
 
-        // 2. 线性插值重采样至 16kHz
-        double ratio = (double)_sourceSampleRate / _targetSampleRate;
-        int targetLength = (int)Math.Floor(monoSamples.Length / ratio);
-        var targetPcm = new byte[targetLength * 2];
-
-        for (int i = 0; i < targetLength; i++)
-        {
-            double srcIdx = i * ratio;
-            int idxFloor = (int)Math.Floor(srcIdx);
-            int idxCeil = Math.Min(idxFloor + 1, monoSamples.Length - 1);
-            double frac = srcIdx - idxFloor;
-
-            float sample = (float)((1.0 - frac) * monoSamples[idxFloor] + frac * monoSamples[idxCeil]);
-
-            // 夹取限幅 [-1.0, 1.0]
-            if (sample > 1.0f) sample = 1.0f;
-            else if (sample < -1.0f) sample = -1.0f;
-
-            short pcmSample = (short)Math.Round(sample * 32767.0f);
-            targetPcm[i * 2] = (byte)(pcmSample & 0xFF);
-            targetPcm[i * 2 + 1] = (byte)((pcmSample >> 8) & 0xFF);
-        }
-
-        return targetPcm;
+        _pendingCount = data.Length - frames * _blockAlign;
+        data.AsSpan(frames * _blockAlign).CopyTo(_pendingBytes);
+        return output.ToArray();
     }
 }

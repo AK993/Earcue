@@ -53,11 +53,13 @@ public class AutoAnswerAndOverlayTests
     {
         var defaults = new AutoAnswerOptions();
         Assert.True(defaults.Enabled);
+        Assert.True(defaults.ExtractAndCorrectQuestion);
         Assert.InRange(defaults.SilenceMs, 500, 10000);
         Assert.True(defaults.MinChars > 0);
 
         var config = new EarcueConfig();
         config.AutoAnswer.Enabled = false;
+        config.AutoAnswer.ExtractAndCorrectQuestion = false;
         config.AutoAnswer.SilenceMs = 3500;
         config.AutoAnswer.MinChars = 8;
         config.AutoAnswer.CooldownMs = 7000;
@@ -68,6 +70,7 @@ public class AutoAnswerAndOverlayTests
             config.SaveToFile(path);
             var loaded = EarcueConfig.LoadFromFile(path);
             Assert.False(loaded.AutoAnswer.Enabled);
+            Assert.False(loaded.AutoAnswer.ExtractAndCorrectQuestion);
             Assert.Equal(3500, loaded.AutoAnswer.SilenceMs);
             Assert.Equal(8, loaded.AutoAnswer.MinChars);
             Assert.Equal(7000, loaded.AutoAnswer.CooldownMs);

@@ -14,5 +14,39 @@
     "sha256": "27FFBD9EE24AD186D99ACC2F6354D7992B27BCAB490812510665FA8F9389C5F8",
     "sizeBytes": 511274346,
     "description": "中文 + 英文混说，适合有英文术语/外企会议；模型比纯中文版大，CPU 占用略高。"
+  },
+  {
+    "id": "sherpa-onnx-streaming-paraformer-bilingual-zh-en",
+    "modelType": "Paraformer",
+    "displayName": "中英双语流式 Paraformer INT8",
+    "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en",
+    "sizeBytes": 237524245,
+    "description": "中文 / 英文流式识别，INT8 量化版，CPU 本地运行；可与原有两套 Zipformer 切换对比。",
+    "files": [
+      {
+        "path": "encoder.int8.onnx",
+        "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en/resolve/8e40c43232a1c5c66c82111efc5820d3accca11b/encoder.int8.onnx",
+        "sha256": "81A70226A8934E6ED92AA1D4FC486B428B5398E2F2619ED4897B7294CAB90E9A",
+        "sizeBytes": 165462184
+      },
+      {
+        "path": "decoder.int8.onnx",
+        "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en/resolve/8e40c43232a1c5c66c82111efc5820d3accca11b/decoder.int8.onnx",
+        "sha256": "F3CCA9F77BB9D93C8FCBFB63AE617B6B1EE96818DF3AA3B151C40658FE38594F",
+        "sizeBytes": 71664561
+      },
+      {
+        "path": "tokens.txt",
+        "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en/resolve/8e40c43232a1c5c66c82111efc5820d3accca11b/tokens.txt",
+        "sha256": "59ABA8873A2ED1E122C25FEE421E25F283B63290EFBDE85C1F01A853D83CB6E6",
+        "sizeBytes": 75756
+      },
+      {
+        "path": "test_wavs/0.wav",
+        "url": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-bilingual-zh-en/resolve/8e40c43232a1c5c66c82111efc5820d3accca11b/test_wavs/0.wav",
+        "sha256": "7D93384CA14702CC584A7A33FE2FED92E89E708549161CB12EA38C916882103B",
+        "sizeBytes": 321744
+      }
+    ]
   }
 ]

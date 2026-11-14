@@ -31,6 +31,14 @@ logs/
 
 ## Local runtime config (contains DPAPI-encrypted secrets)
 config.json
+config.json.invalid-*
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.pem
+*.key
 
 ## Local verification artifacts
 artifacts-*.png

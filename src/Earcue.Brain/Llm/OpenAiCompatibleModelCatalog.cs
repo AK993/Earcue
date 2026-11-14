@@ -10,7 +10,7 @@ namespace Earcue.Brain.Llm;
 
 /// <summary>
 /// 通过 OpenAI 兼容的 GET /models 接口，查询某个 API Key 实际可以调用哪些模型；
-/// 并可发一次极小的非流式 chat/completions 请求验证所选模型是否可用。
+/// 并使用正式回答相同的流式请求验证所选模型是否可用。
 /// </summary>
 public sealed class OpenAiCompatibleModelCatalog : IDisposable
 {
@@ -129,7 +129,7 @@ public sealed class OpenAiCompatibleModelCatalog : IDisposable
         return Fail(lastError ?? "无法访问模型列表接口", stopwatch, candidates[^1]);
     }
 
-    /// <summary>用一次最小的 chat/completions 请求验证模型是否可用。不会抛异常。</summary>
+    /// <summary>使用与正式回答完全相同的流式客户端验证模型，不发送个人资料。</summary>
     public async Task<LlmProbeResult> TestChatAsync(
         string? baseUrl,
         string? apiKey,
@@ -138,95 +138,34 @@ public sealed class OpenAiCompatibleModelCatalog : IDisposable
     {
         var stopwatch = Stopwatch.StartNew();
         if (!LlmEndpoints.TryNormalizeBaseUrl(baseUrl, out var normalized, out var urlError))
-        {
             return ProbeFail(urlError, stopwatch);
-        }
-
-        if (string.IsNullOrWhiteSpace(model))
+        if (string.IsNullOrWhiteSpace(model)) return ProbeFail("请先选择或输入模型 ID", stopwatch);
+        var client = new OpenAiCompatibleLlmClient(new Earcue.Core.Configuration.LlmOptions
         {
-            return ProbeFail("请先选择或输入模型 ID", stopwatch);
-        }
-
-        var candidates = LlmEndpoints.ChatCompletionsCandidates(normalized);
-        string? lastError = null;
-
-        var payload = JsonSerializer.Serialize(new
+            BaseUrl = normalized, ApiKey = apiKey ?? string.Empty, Model = model.Trim(), MaxTokens = 64
+        }, _httpClient);
+        try
         {
-            model = model.Trim(),
-            stream = false,
-            temperature = 0.2,
-            max_tokens = 16,
-            messages = new[]
+            var reply = new StringBuilder();
+            await foreach (var part in client.AskAsync(new Prompt { Mode = PromptMode.ConnectionTest }, cancellationToken))
+                reply.Append(part);
+            return new LlmProbeResult
             {
-                new { role = "user", content = "请只回复四个字：连接正常" }
-            }
-        });
-
-        foreach (var url in candidates)
-        {
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(RequestTimeout);
-
-            try
-            {
-                using var request = new HttpRequestMessage(HttpMethod.Post, url)
-                {
-                    Content = new StringContent(payload, Encoding.UTF8, "application/json")
-                };
-                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-                request.Headers.TryAddWithoutValidation("User-Agent", "Earcue/0.1 ModelProbe");
-                if (!string.IsNullOrWhiteSpace(apiKey))
-                {
-                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey.Trim());
-                }
-
-                using var response = await _httpClient
-                    .SendAsync(request, HttpCompletionOption.ResponseContentRead, timeoutCts.Token)
-                    .ConfigureAwait(false);
-                var body = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
-                stopwatch.Stop();
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    lastError = DescribeHttpStatus(response.StatusCode, ExtractApiError(body));
-                    if (response.StatusCode == HttpStatusCode.NotFound && candidates.Count > 1)
-                    {
-                        continue;
-                    }
-
-                    return ProbeFail(lastError, stopwatch, url);
-                }
-
-                var reply = ExtractReply(body);
-                if (string.IsNullOrWhiteSpace(reply))
-                {
-                    return ProbeFail("接口连通，但模型没有返回内容（该模型可能不支持 chat/completions）", stopwatch, url);
-                }
-
-                return new LlmProbeResult
-                {
-                    IsSuccess = true,
-                    Message = "模型调用成功",
-                    Reply = reply.Trim(),
-                    LatencyMs = stopwatch.ElapsedMilliseconds,
-                    Endpoint = url
-                };
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                return ProbeFail($"请求超时（{RequestTimeout.TotalSeconds:0} 秒）", stopwatch, url);
-            }
-            catch (HttpRequestException ex)
-            {
-                return ProbeFail($"网络请求失败：{ex.Message}", stopwatch, url);
-            }
-            catch (Exception ex)
-            {
-                return ProbeFail($"请求异常：{ex.Message}", stopwatch, url);
-            }
+                IsSuccess = true, Message = "流式模型调用成功", Reply = reply.ToString().Trim(),
+                LatencyMs = stopwatch.ElapsedMilliseconds, FirstTextMs = client.LastFirstTextMs,
+                Endpoint = client.LastEndpoint
+            };
         }
-
-        return ProbeFail(lastError ?? "无法调用该模型", stopwatch, candidates[^1]);
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (HttpRequestException error)
+        {
+            var status = error.StatusCode is { } code ? $"（HTTP {(int)code}）" : "";
+            return ProbeFail($"流式请求失败{status}：{error.Message}", stopwatch, client.LastEndpoint);
+        }
+        catch (Exception error)
+        {
+            return ProbeFail(error.Message, stopwatch, client.LastEndpoint);
+        }
     }
 
     public void Dispose()
@@ -358,62 +297,6 @@ public sealed class OpenAiCompatibleModelCatalog : IDisposable
             models.Sort((a, b) => string.Compare(a.Id, b.Id, StringComparison.OrdinalIgnoreCase));
             return (models, null);
         }
-    }
-
-    private static string? ExtractReply(string body)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(body);
-            var root = document.RootElement;
-            if (!TryGetPropertyIgnoreCase(root, "choices", out var choices) ||
-                choices.ValueKind != JsonValueKind.Array ||
-                choices.GetArrayLength() == 0)
-            {
-                return null;
-            }
-
-            var first = choices[0];
-            if (TryGetPropertyIgnoreCase(first, "message", out var message) &&
-                TryGetPropertyIgnoreCase(message, "content", out var content))
-            {
-                if (content.ValueKind == JsonValueKind.String)
-                {
-                    return content.GetString();
-                }
-
-                if (content.ValueKind == JsonValueKind.Array)
-                {
-                    var builder = new StringBuilder();
-                    foreach (var part in content.EnumerateArray())
-                    {
-                        if (part.ValueKind == JsonValueKind.String)
-                        {
-                            builder.Append(part.GetString());
-                        }
-                        else if (TryGetPropertyIgnoreCase(part, "text", out var text) &&
-                                 text.ValueKind == JsonValueKind.String)
-                        {
-                            builder.Append(text.GetString());
-                        }
-                    }
-
-                    return builder.ToString();
-                }
-            }
-
-            if (TryGetPropertyIgnoreCase(first, "text", out var legacyText) &&
-                legacyText.ValueKind == JsonValueKind.String)
-            {
-                return legacyText.GetString();
-            }
-        }
-        catch (JsonException)
-        {
-            // ignore
-        }
-
-        return null;
     }
 
     private static string DescribeHttpStatus(HttpStatusCode status, string? detail)

@@ -49,17 +49,71 @@ public sealed class EarcueConfig
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
-    public static EarcueConfig LoadFromFile(string path)
+    public static EarcueConfig LoadFromFile(string path) => LoadFromFile(path, out _);
+
+    public static EarcueConfig LoadFromFile(string path, out string? warning)
     {
+        warning = null;
         if (!File.Exists(path))
             return new EarcueConfig();
 
-        var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<EarcueConfig>(json, LoadOptions) ?? new EarcueConfig();
+        try
+        {
+            var json = File.ReadAllText(path);
+            var config = JsonSerializer.Deserialize<EarcueConfig>(json, LoadOptions) ?? new EarcueConfig();
+            config.Normalize();
+            return config;
+        }
+        catch (JsonException)
+        {
+            var backup = path + ".invalid-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                File.Copy(path, backup);
+                warning = $"配置格式无效，已使用默认设置。原文件已备份到 {backup}，请重新检查模型设置。";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                warning = "配置格式无效，已使用默认设置；原文件无法备份，尚未修改，请先手动保留后重新设置。";
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            warning = "无法读取配置，已使用默认设置。请检查程序目录的读取权限。";
+        }
+        return new EarcueConfig();
+    }
+
+    private void Normalize()
+    {
+        Asr ??= new(); Segment ??= new(); Trigger ??= new(); AutoAnswer ??= new();
+        Profile ??= new(); Llm ??= new(); Overlay ??= new(); Mic ??= new(); Privacy ??= new();
+        Asr.LoopbackModel ??= new AsrOptions().LoopbackModel;
+        Asr.MicModel ??= Asr.LoopbackModel;
+        Asr.ModelRoot ??= string.Empty;
+        Asr.Hotwords ??= new();
+        Profile.Role ??= InterviewRolePresets.Candidate;
+        Profile.Resume ??= string.Empty;
+        Llm.Provider ??= "deepseek";
+        Llm.BaseUrl ??= new LlmOptions().BaseUrl;
+        Llm.Model ??= new LlmOptions().Model;
+        Llm.ProtectedApiKey ??= string.Empty;
+        Llm.UserRoleDescription ??= string.Empty;
+        Llm.UserStance ??= string.Empty;
+        // Migrate the old defaults that prematurely canceled reasoning/long-context streams.
+        if (Llm.FirstTokenTimeoutMs == 5000 && Llm.TimeoutMs == 20000)
+        {
+            Llm.FirstTokenTimeoutMs = 15000;
+            Llm.TimeoutMs = 60000;
+        }
+        Overlay.Position ??= OverlayPositionPresets.BottomLeft;
+        Overlay.FontFamily ??= "Microsoft YaHei UI";
+        Overlay.AnswerColor ??= "#00F0FF";
     }
 
     public void SaveToFile(string path)
     {
+        Normalize();
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
         {
@@ -126,14 +180,17 @@ public sealed class TriggerOptions
 
 /// <summary>
 /// 自动应答：不再判断"是不是疑问句"，而是把最近识别到的全部内容交给 LLM；
-/// 当连续一段时间没有新的识别文本时，自动生成一条接话提示。
+/// 当音频停顿、识别结果完成且稳定后，自动生成一条接话提示。
 /// </summary>
 public sealed class AutoAnswerOptions
 {
+    [JsonPropertyName("extractAndCorrectQuestion")]
+    public bool ExtractAndCorrectQuestion { get; set; } = true;
+
     [JsonPropertyName("enabled")]
     public bool Enabled { get; set; } = true;
 
-    /// <summary>连续多久没有新的识别内容后触发应答。</summary>
+    /// <summary>音频活动与识别更新均停止多久后触发应答；未完成的草稿会继续等待。</summary>
     [JsonPropertyName("silenceMs")]
     public int SilenceMs { get; set; } = 2000;
 
@@ -197,10 +254,10 @@ public sealed class LlmOptions
     public int MaxTokens { get; set; } = 1024;
 
     [JsonPropertyName("timeoutMs")]
-    public int TimeoutMs { get; set; } = 20000;
+    public int TimeoutMs { get; set; } = 60000;
 
     [JsonPropertyName("firstTokenTimeoutMs")]
-    public int FirstTokenTimeoutMs { get; set; } = 5000;
+    public int FirstTokenTimeoutMs { get; set; } = 15000;
 
     [JsonPropertyName("userRoleDescription")]
     public string UserRoleDescription { get; set; } = "技术研发负责人";
@@ -252,9 +309,33 @@ public sealed class LlmOptions
 
 public sealed class OverlayOptions
 {
-    /// <summary>整体不透明度（0.05–1.0），同时作用于卡片背景与文字。</summary>
+    private double _legacyOpacity = 0.92;
+    private double? _backgroundOpacity;
+    private double? _textOpacity;
+
+    /// <summary>旧版整体不透明度，仅用于兼容没有独立透明度字段的配置。</summary>
     [JsonPropertyName("opacity")]
-    public double Opacity { get; set; } = 0.92;
+    public double Opacity
+    {
+        get => _legacyOpacity;
+        set => _legacyOpacity = double.IsFinite(value) ? Math.Clamp(value, 0.05, 1) : 0.92;
+    }
+
+    /// <summary>背景不透明度，0 完全透明，1 完全不透明；兼容旧背景自带的 alpha。</summary>
+    [JsonPropertyName("backgroundOpacity")]
+    public double BackgroundOpacity
+    {
+        get => _backgroundOpacity ?? Opacity * (236.0 / 255);
+        set => _backgroundOpacity = double.IsFinite(value) ? Math.Clamp(value, 0, 1) : 0.85;
+    }
+
+    /// <summary>文字不透明度，0 完全透明，1 完全不透明。</summary>
+    [JsonPropertyName("textOpacity")]
+    public double TextOpacity
+    {
+        get => _textOpacity ?? Opacity;
+        set => _textOpacity = double.IsFinite(value) ? Math.Clamp(value, 0, 1) : 0.92;
+    }
 
     /// <summary>绝对 X 坐标；与 PositionY 同时有值时优先于 Position 预设。</summary>
     [JsonPropertyName("positionX")]

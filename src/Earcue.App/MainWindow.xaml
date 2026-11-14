@@ -1,188 +1,243 @@
-﻿<Window x:Class="Earcue.App.MainWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="附耳 Earcue · 会议实时问答助手 控制台 (v0.1)"
-        Height="680" Width="960"
-        Icon="Assets/app.ico"
-        WindowStartupLocation="CenterScreen"
-        Background="#0F141C"
-        Foreground="#E0E6ED">
-    
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="Earcue.App.MainWindow" Title="附耳 Earcue" Width="1240" Height="800" MinWidth="1060" MinHeight="660" WindowStartupLocation="CenterScreen" Icon="Assets/app.ico" Background="#F3F7F5" Foreground="#203A31" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13" UseLayoutRounding="True" SnapsToDevicePixels="True">
     <Window.Resources>
-        <Style TargetType="Button">
-            <Setter Property="Background" Value="#1E293B"/>
-            <Setter Property="Foreground" Value="#F8FAFC"/>
-            <Setter Property="Padding" Value="14,8"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="BorderBrush" Value="#334155"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="6"
-                                Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#334155"/>
-                    <Setter Property="BorderBrush" Value="#475569"/>
-                </Trigger>
-            </Style.Triggers>
-        </Style>
-
-        <Style TargetType="TextBox">
-            <Setter Property="Background" Value="#161F2E"/>
-            <Setter Property="Foreground" Value="#F8FAFC"/>
-            <Setter Property="BorderBrush" Value="#334155"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="8,6"/>
-            <Setter Property="CaretBrush" Value="#38BDF8"/>
-        </Style>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/DesignSystem.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
     </Window.Resources>
-
-    <Grid Margin="20">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-
-        <!-- Header -->
-        <Grid Grid.Row="0" Margin="0,0,0,16">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <Border Width="12" Height="12" CornerRadius="6" Background="#10B981" Margin="0,0,10,0"/>
-                <TextBlock Text="附耳 Earcue" FontSize="20" FontWeight="Bold" Foreground="#38BDF8"/>
-                <TextBlock Text="· 会议实时提词器" FontSize="14" Foreground="#94A3B8" Margin="8,4,0,0"/>
-            </StackPanel>
-
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button x:Name="BtnTestOverlay" Content="💡 预览" Margin="0,0,10,0" ToolTip="预览置顶字幕卡" Click="BtnTestOverlay_Click"/>
-                <Button x:Name="BtnEditOverlay" Content="🖱 调整" Margin="0,0,10,0" ToolTip="打开后可以鼠标拖动/缩放字幕卡" Click="BtnEditOverlay_Click"/>
-                <Button x:Name="BtnModelSettings" Content="⚙ 设置" Margin="0,0,10,0" Click="BtnModelSettings_Click"/>
-                <Button x:Name="BtnProfile" Content="👤 面试资料" Margin="0,0,10,0" Click="BtnProfile_Click"/>
-                <Button x:Name="BtnToggleCapture" Content="▶ 启动采集与本地识别" Click="BtnToggleCapture_Click"/>
-            </StackPanel>
-        </Grid>
-
-        <!-- Status & Settings Strip -->
-        <Border Grid.Row="1" Background="#161F2E" CornerRadius="8" Padding="14" Margin="0,0,0,16" BorderBrush="#223046" BorderThickness="1">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-
-                <!-- Col 1: Audio Loopback Status -->
-                <StackPanel Grid.Column="0">
-                    <TextBlock Text="音频采集 (WASAPI)" FontSize="12" Foreground="#64748B" FontWeight="Bold" Margin="0,0,0,4"/>
-                    <TextBlock x:Name="TxtAudioStatus" Text="状态: 未运行 (点击上方启动)" FontSize="13" Foreground="#F8FAFC"/>
-                    <TextBlock x:Name="TxtSampleCount" Text="累计帧数: 0 帧 | 漂移: 0ms" FontSize="11" Foreground="#94A3B8" Margin="0,2,0,0"/>
-                    <TextBlock x:Name="TxtAsrModel" Text="ASR: 未加载" FontSize="11" Foreground="#94A3B8" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="188" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <Border Background="#15392C">
+            <Grid Margin="16,28,16,22">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <StackPanel Margin="12,0,0,42">
+                    <StackPanel Orientation="Horizontal">
+                        <Border Width="34" Height="34" CornerRadius="11" Background="#8AD7AD" Margin="0,0,11,0">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Border Width="3" Height="10" Background="#15392C" CornerRadius="1.5" Margin="0,0,3,0" />
+                                <Border Width="3" Height="20" Background="#15392C" CornerRadius="1.5" Margin="0,0,3,0" />
+                                <Border Width="3" Height="14" Background="#15392C" CornerRadius="1.5" />
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Text="附耳" Foreground="White" FontSize="23" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock Text="EARCUE · YOUR NEXT WORD" FontSize="8.5" Foreground="#8FBAA1" Margin="1,12,0,0" />
                 </StackPanel>
-
-                <!-- Col 2: Overlay Capture Status -->
-                <StackPanel Grid.Column="1">
-                    <TextBlock Text="置顶字幕层 (Win32 Overlay)" FontSize="12" Foreground="#64748B" FontWeight="Bold" Margin="0,0,0,4"/>
-                    <TextBlock x:Name="TxtOverlayStatus" Text="状态: 屏幕共享捕获排除生效中" FontSize="13" Foreground="#34D399"/>
-                    <TextBlock Text="WDA_EXCLUDEFROMCAPTURE = 0x11" FontSize="11" Foreground="#94A3B8" Margin="0,2,0,0"/>
+                <StackPanel Grid.Row="1">
+                    <TextBlock Text="工作空间" FontSize="10" Foreground="#7FA68D" Margin="14,0,0,12" />
+                    <Border Background="#2B5340" CornerRadius="10" Padding="14,13" Margin="0,0,0,8">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="" FontFamily="Segoe MDL2 Assets" Foreground="#A6E6BC" FontSize="16" Margin="0,0,12,0" VerticalAlignment="Center" />
+                            <TextBlock Text="会议工作台" Foreground="White" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Border>
+                    <Button x:Name="BtnProfile" Style="{StaticResource SideNavButton}" Click="BtnProfile_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="" FontFamily="Segoe MDL2 Assets" FontSize="16" Margin="0,0,12,0" />
+                            <TextBlock Text="面试资料" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="BtnModelSettings" Style="{StaticResource SideNavButton}" Click="BtnModelSettings_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="" FontFamily="Segoe MDL2 Assets" FontSize="16" Margin="0,0,12,0" />
+                            <TextBlock Text="模型与设置" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
-
-                <!-- Col 3: LLM Settings -->
-                <StackPanel Grid.Column="2">
-                    <TextBlock Text="回答模型 (LLM API)" FontSize="12" Foreground="#64748B" FontWeight="Bold" Margin="0,0,0,4"/>
-                    <TextBlock x:Name="TxtLlmStatus" Text="DeepSeek · deepseek-chat" FontSize="13" Foreground="#F8FAFC" TextTrimming="CharacterEllipsis"/>
-                    <TextBlock x:Name="TxtLlmKeyStatus" Text="API Key: 未配置，点击【设置】" FontSize="11" Foreground="#FBBF24" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
-                </StackPanel>
+                <Border Grid.Row="3" Background="#204431" CornerRadius="13" Padding="14">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="6" Height="6" Fill="#9FE0B6" Margin="0,0,8,0" />
+                            <TextBlock Text="本地语音识别" FontSize="11" Foreground="#D0E7D7" />
+                        </StackPanel>
+                        <TextBlock Text="声音留在你的电脑&#10;专注眼前的每一次交流" Foreground="#8FB79C" FontSize="10" LineHeight="19" Margin="0,8,0,0" />
+                    </StackPanel>
+                </Border>
             </Grid>
         </Border>
-
-        <!-- Main Content Area: Left Transcript / Right Trigger & Cards -->
-        <Grid Grid.Row="2">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="3*"/>
-                <ColumnDefinition Width="2*"/>
-            </Grid.ColumnDefinitions>
-
-            <!-- Left: Transcript Feed -->
-            <Border Grid.Column="0" Background="#141B26" CornerRadius="8" Padding="14" Margin="0,0,10,0" BorderBrush="#223046" BorderThickness="1">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <StackPanel Grid.Row="0" Margin="0,0,0,10">
-                        <TextBlock Text="实时转录流水线 (带 [对方]/[我] 角色标注)" FontSize="13" FontWeight="Bold" Foreground="#94A3B8"/>
-                        <TextBlock x:Name="TxtLiveAsr" Text="" FontSize="12" Foreground="#38BDF8"
-                                   FontFamily="Consolas, Microsoft YaHei"
-                                   TextTrimming="CharacterEllipsis" MinHeight="16" Margin="0,5,0,0"/>
+        <Grid Grid.Column="1" Margin="28,25,28,18">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Grid Margin="0,0,0,24">
+                <StackPanel>
+                    <TextBlock Text="WORKSPACE" Foreground="#157D64" FontSize="10" FontWeight="SemiBold" />
+                    <TextBlock Text="会议工作台" FontSize="27" FontWeight="SemiBold" Margin="0,6,0,0" />
+                    <TextBlock Text="安心聆听，从容回应。" Foreground="#718179" FontSize="12" Margin="0,5,0,0" />
+                </StackPanel>
+                <Button x:Name="BtnToggleCapture" Content="开始聆听" Click="BtnToggleCapture_Click" Style="{StaticResource PrimaryButton}" Padding="24,13" MinWidth="134" FontSize="14" HorizontalAlignment="Right" VerticalAlignment="Center" />
+            </Grid>
+            <Grid Grid.Row="1" Margin="0,0,0,22">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="14" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="14" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border Style="{StaticResource SurfaceCard}" Padding="18,17">
+                    <StackPanel>
+                        <TextBlock Text="会议音频" Foreground="#7A8B82" FontSize="11" />
+                        <TextBlock x:Name="TxtAudioStatus" Text="尚未开始" FontWeight="SemiBold" FontSize="14" Margin="0,9,0,5" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                        <TextBlock x:Name="TxtSampleCount" Text="准备好后，开始聆听会议声音" Foreground="#7A8B82" FontSize="10" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
-                    <ScrollViewer Grid.Row="1" x:Name="ScrollerTranscript" VerticalScrollBarVisibility="Auto">
-                        <TextBox x:Name="TxtTranscript"
-                                 Background="Transparent"
-                                 Foreground="#CBD5E1"
-                                 BorderThickness="0"
-                                 IsReadOnly="True"
-                                 TextWrapping="Wrap"
-                                 FontSize="13"
-                                 FontFamily="Consolas, Microsoft YaHei"
-                                 Text="[系统] 附耳流水线就绪。点击右上角【启动采集与本地识别】开始监听会议声音。&#x0a;[系统] 首次使用需先安装本地 ASR 模型，缺少模型时启动会提示下载命令。&#x0a;"/>
-                    </ScrollViewer>
-                </Grid>
-            </Border>
-
-            <!-- Right: Question Triggers and Answer Cards -->
-            <Border Grid.Column="1" Background="#141B26" CornerRadius="8" Padding="14" BorderBrush="#223046" BorderThickness="1">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-
-                    <TextBlock Grid.Row="0" Text="触发问题与 40 字速答记录" FontSize="13" FontWeight="Bold" Foreground="#94A3B8" Margin="0,0,0,10"/>
-
-                    <ScrollViewer Grid.Row="1" x:Name="ScrollerCards" VerticalScrollBarVisibility="Auto">
-                        <StackPanel x:Name="PanelCards" Orientation="Vertical">
-                            <!-- Sample Card item -->
-                            <Border Background="#1E293B" CornerRadius="6" Padding="12" Margin="0,0,0,10" BorderBrush="#334155" BorderThickness="1">
-                                <StackPanel>
-                                    <TextBlock Text="[对方] 那你们这个灰度策略怎么保证回滚？" Foreground="#94A3B8" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,6"/>
-                                    <TextBlock Text="按 5% 分批，每批观察 30 分钟，异常率超 1% 立即回滚上一版本" Foreground="#38BDF8" FontSize="13" FontWeight="Bold" TextWrapping="Wrap"/>
-                                </StackPanel>
+                </Border>
+                <Border Grid.Column="2" Style="{StaticResource SurfaceCard}" Padding="18,17">
+                    <StackPanel>
+                        <TextBlock Text="本地识别引擎" Foreground="#7A8B82" FontSize="11" />
+                        <TextBlock x:Name="TxtAsrModel" Text="语音模型已就绪" FontWeight="SemiBold" FontSize="13" Margin="0,9,0,5" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="Zipformer / Paraformer · 离线运行" Foreground="#7A8B82" FontSize="10" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="4" Style="{StaticResource SurfaceCard}" Padding="18,17">
+                    <StackPanel>
+                        <TextBlock Text="回答模型" Foreground="#7A8B82" FontSize="11" />
+                        <TextBlock x:Name="TxtLlmStatus" Text="尚未配置" FontWeight="SemiBold" FontSize="13" Margin="0,9,0,5" TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="TxtLlmKeyStatus" Text="前往设置连接模型" Foreground="#A46B20" FontSize="10" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Border>
+                <Border x:Name="CaptureErrorBanner" Grid.Row="1" Grid.ColumnSpan="5" Visibility="Collapsed" Background="#FFF3DE" BorderBrush="#ECD8AD" BorderThickness="1" CornerRadius="10" Margin="0,10,0,0" Padding="12,8">
+                    <DockPanel LastChildFill="True">
+                        <Button x:Name="BtnRetryCapture" Content="重新开始" Click="BtnRetryCapture_Click" DockPanel.Dock="Right" MinHeight="28" Padding="10,4" FontSize="11" Margin="12,0,0,0" />
+                        <TextBlock x:Name="TxtCaptureError" Foreground="#896020" TextWrapping="Wrap" VerticalAlignment="Center" FontSize="12" />
+                    </DockPanel>
+                </Border>
+            </Grid>
+            <Grid Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.1*" />
+                    <ColumnDefinition Width="18" />
+                    <ColumnDefinition Width="1*" />
+                </Grid.ColumnDefinitions>
+                <Border Style="{StaticResource SurfaceCard}" Padding="20">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid Margin="0,0,0,18">
+                            <StackPanel>
+                                <TextBlock Text="实时转录" FontSize="17" FontWeight="SemiBold" />
+                                <TextBlock Text="听见对方说的每一句" Foreground="#7A8B82" FontSize="11" Margin="0,6,0,0" />
+                            </StackPanel>
+                            <Border Background="#EEF5F0" CornerRadius="6" Padding="8,4" HorizontalAlignment="Right" VerticalAlignment="Top">
+                                <TextBlock Text="本地" Foreground="#4F7D60" FontSize="10" />
                             </Border>
-                        </StackPanel>
-                    </ScrollViewer>
-
-                    <!-- Manual Input / Fast Test Bar -->
-                    <Grid Grid.Row="2" Margin="0,10,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="TxtManualQuestion" Grid.Column="0" Text="你们这个灰度策略怎么保证回滚？" Margin="0,0,8,0"/>
-                        <Button x:Name="BtnManualAsk" Grid.Column="1" Content="模拟提问" Click="BtnManualAsk_Click"/>
+                        </Grid>
+                        <Grid Grid.Row="1">
+                            <ScrollViewer x:Name="ScrollerTranscript" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <TextBox x:Name="TxtTranscript" Background="Transparent" BorderThickness="0" Padding="0" IsReadOnly="True" TextWrapping="Wrap" Foreground="#526A5C" FontSize="12.5" FontFamily="Segoe UI, Microsoft YaHei UI" />
+                            </ScrollViewer>
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Text, ElementName=TxtTranscript}" Value="">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <Border Width="60" Height="60" CornerRadius="20" Background="#EFF6F1" HorizontalAlignment="Center">
+                                    <TextBlock Text="" FontFamily="Segoe MDL2 Assets" FontSize="25" Foreground="#6A9A78" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <TextBlock Text="等待会议开始" HorizontalAlignment="Center" FontWeight="SemiBold" Margin="0,19,0,8" FontSize="14" />
+                                <TextBlock Text="点击「开始聆听」&#10;会议声音将在这里转成文字" Foreground="#8A9B90" TextAlignment="Center" LineHeight="21" FontSize="12" />
+                            </StackPanel>
+                        </Grid>
+                        <Border Grid.Row="2" BorderBrush="#EDF2EE" BorderThickness="0,1,0,0" Padding="0,12,0,0" Margin="0,14,0,0">
+                            <TextBlock x:Name="TxtLiveAsr" Text="" Foreground="#157D64" FontSize="12" MinHeight="18" TextTrimming="CharacterEllipsis" />
+                        </Border>
                     </Grid>
-                </Grid>
-            </Border>
+                </Border>
+                <Border Grid.Column="2" Style="{StaticResource SurfaceCard}" Padding="20">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid Margin="0,0,0,18">
+                            <StackPanel>
+                                <TextBlock Text="回答建议" FontSize="17" FontWeight="SemiBold" />
+                                <DockPanel Margin="0,6,0,0">
+                                    <Button x:Name="BtnResumeAuto" Content="恢复自动应答" Click="BtnResumeAuto_Click" DockPanel.Dock="Right" Visibility="Collapsed" Style="{StaticResource LinkButton}" MinHeight="22" Padding="5,1" FontSize="10.5" Margin="4,0,0,0" />
+                                    <TextBlock x:Name="TxtAutoAnswerStatus" Text="自动应答等待开始聆听" Foreground="#7A8B82" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                                </DockPanel>
+                            </StackPanel>
+                            <Border Background="#E2F2E7" CornerRadius="6" Padding="8,4" HorizontalAlignment="Right" VerticalAlignment="Top">
+                                <TextBlock Text="AI 辅助" Foreground="#157D64" FontSize="10" />
+                            </Border>
+                        </Grid>
+                        <Grid Grid.Row="1">
+                            <ScrollViewer x:Name="ScrollerCards" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <StackPanel x:Name="PanelCards" />
+                            </ScrollViewer>
+                            <StackPanel x:Name="EmptyCardsState" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                                <Border Width="60" Height="60" CornerRadius="20" Background="#EFF6F1" HorizontalAlignment="Center">
+                                    <TextBlock Text="" FontFamily="Segoe MDL2 Assets" FontSize="25" Foreground="#6A9A78" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <TextBlock Text="好的回答，从聆听开始" FontWeight="SemiBold" FontSize="14" HorizontalAlignment="Center" Margin="0,19,0,8" />
+                                <TextBlock Text="对方停顿后，回答建议会出现在这里&#10;也可以在下方直接输入问题" Foreground="#8A9B90" TextAlignment="Center" LineHeight="21" FontSize="11.5" />
+                            </StackPanel>
+                        </Grid>
+                        <Border Grid.Row="2" BorderBrush="#EDF2EE" BorderThickness="0,1,0,0" Margin="0,10,0,0" Padding="0,10,0,0">
+                            <StackPanel>
+                                <TextBlock Text="手动提问" Foreground="#73897A" FontSize="11" Margin="0,0,0,8" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="TxtManualQuestion" AcceptsReturn="True" TextWrapping="Wrap" Height="48" VerticalContentAlignment="Top" Padding="10,9" VerticalScrollBarVisibility="Auto" ToolTip="输入问题或补充背景" />
+                                    <TextBlock Text="输入问题，或补充对话背景…" Margin="12,12,0,0" Foreground="#9CAC9F" IsHitTestVisible="False" VerticalAlignment="Top" FontSize="11.5">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Text, ElementName=TxtManualQuestion}" Value="">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <Button x:Name="BtnManualAsk" Grid.Column="1" Content="生成回答" Click="BtnManualAsk_Click" Margin="8,0,0,0" Padding="10,7" MinHeight="32" FontSize="12" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+            </Grid>
+            <Grid Grid.Row="3" Margin="0,14,0,0">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Ellipse Width="5" Height="5" Fill="#4A9864" Margin="0,0,7,0" />
+                    <TextBlock x:Name="TxtOverlayStatus" Text="字幕卡已启用共享捕获排除" Foreground="#829689" FontSize="10" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="BtnTestOverlay" Content="预览字幕卡" Click="BtnTestOverlay_Click" Style="{StaticResource LinkButton}" FontSize="11" MinHeight="26" Padding="8,3" />
+                    <TextBlock Text="·" Foreground="#B6C6BA" VerticalAlignment="Center" Margin="3,0" />
+                    <Button x:Name="BtnEditOverlay" Content="调整位置" Click="BtnEditOverlay_Click" Style="{StaticResource LinkButton}" FontSize="11" MinHeight="26" Padding="8,3" />
+                </StackPanel>
+            </Grid>
         </Grid>
-
-        <!-- Footer / Status Bar -->
-        <StatusBar Grid.Row="3" Background="Transparent" Foreground="#64748B" FontSize="11" Margin="0,10,0,0">
-            <StatusBarItem Content="单进程 Earcue.exe · .NET 8 WPF"/>
-            <Separator Background="#223046"/>
-            <StatusBarItem Content="隐私保证：音频原始数据不出本机、不落盘"/>
-            <Separator Background="#223046"/>
-            <StatusBarItem Content="默认热键：Ctrl+Alt+H (卡片显隐) | Ctrl+Alt+X (快速收起)"/>
-        </StatusBar>
     </Grid>
 </Window>

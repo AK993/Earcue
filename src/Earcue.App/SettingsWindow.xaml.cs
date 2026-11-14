@@ -23,9 +23,9 @@ public partial class SettingsWindow : Window
         Error
     }
 
-    private static readonly Brush InfoBrush = new SolidColorBrush(Color.FromRgb(0x94, 0xA3, 0xB8));
-    private static readonly Brush SuccessBrush = new SolidColorBrush(Color.FromRgb(0x34, 0xD3, 0x99));
-    private static readonly Brush ErrorBrush = new SolidColorBrush(Color.FromRgb(0xF8, 0x71, 0x71));
+    private static readonly Brush InfoBrush = new SolidColorBrush(Color.FromRgb(0x71, 0x81, 0x79));
+    private static readonly Brush SuccessBrush = new SolidColorBrush(Color.FromRgb(0x15, 0x7D, 0x64));
+    private static readonly Brush ErrorBrush = new SolidColorBrush(Color.FromRgb(0xB1, 0x4E, 0x3A));
 
     private readonly LlmOptions _draft;
     private OverlayOptions _overlayDraft;
@@ -123,7 +123,8 @@ public partial class SettingsWindow : Window
 
         SldAnswerFontSize.Value = Math.Clamp(_overlayDraft.AnswerFontSize, 12, 40);
         SldQuestionFontSize.Value = Math.Clamp(_overlayDraft.QuestionFontSize, 10, 30);
-        SldOverlayOpacity.Value = Math.Clamp(_overlayDraft.Opacity * 100.0, 5, 100);
+        SldBackgroundOpacity.Value = _overlayDraft.BackgroundOpacity * 100;
+        SldTextOpacity.Value = _overlayDraft.TextOpacity * 100;
         SldMarginX.Value = Math.Clamp(_overlayDraft.MarginX, 0, 200);
         SldMarginY.Value = Math.Clamp(_overlayDraft.MarginY, 0, 200);
         TxtAnswerColor.Text = string.IsNullOrWhiteSpace(_overlayDraft.AnswerColor)
@@ -131,6 +132,7 @@ public partial class SettingsWindow : Window
             : _overlayDraft.AnswerColor;
 
         ChkAutoAnswer.IsChecked = _autoDraft.Enabled;
+        ChkCorrectQuestion.IsChecked = _autoDraft.ExtractAndCorrectQuestion;
         SldAutoSilence.Value = Math.Clamp(_autoDraft.SilenceMs / 1000.0, 1, 10);
         ChkAutoHide.IsChecked = _overlayDraft.AutoHide;
         CmbAutoHideSeconds.IsEnabled = _overlayDraft.AutoHide;
@@ -147,7 +149,7 @@ public partial class SettingsWindow : Window
         foreach (var descriptor in AsrModelCatalog.All)
         {
             bool installed = AsrModelLocator.TryLocate(descriptor.Id, _asrDraft.ModelRoot, _asrDraft.UseInt8, out _, out _);
-            var status = installed ? "✔ 已就绪" : "⏳ 需下载";
+            var status = installed ? "已就绪" : "需下载";
             list.Add(new AsrModelViewItem
             {
                 Id = descriptor.Id,
@@ -178,12 +180,12 @@ public partial class SettingsWindow : Window
         if (item is null) return;
         if (item.IsInstalled)
         {
-            TxtAsrModelStatus.Text = "✔ 该模型已在本机安装就绪，保存后在下一次开启采集时生效。";
+            TxtAsrModelStatus.Text = "模型已就绪。保存后重新启动采集即可切换，无需退出程序。";
             TxtAsrModelStatus.Foreground = SuccessBrush;
         }
         else
         {
-            TxtAsrModelStatus.Text = "⚠ 该模型尚未完全下载（若后台正在下载，完成后将自动生效；或使用 tools\\download-asr-models.ps1 下载）。";
+            TxtAsrModelStatus.Text = "模型文件不完整，请安装后再选择。完整版包含全部三套模型。";
             TxtAsrModelStatus.Foreground = InfoBrush;
         }
     }
@@ -269,8 +271,10 @@ public partial class SettingsWindow : Window
             case "AnswerFontUp": Step(SldAnswerFontSize, +1); break;
             case "QuestionFontDown": Step(SldQuestionFontSize, -1); break;
             case "QuestionFontUp": Step(SldQuestionFontSize, +1); break;
-            case "OpacityDown": Step(SldOverlayOpacity, -5); break;
-            case "OpacityUp": Step(SldOverlayOpacity, +5); break;
+            case "BackgroundOpacityDown": Step(SldBackgroundOpacity, -5); break;
+            case "BackgroundOpacityUp": Step(SldBackgroundOpacity, +5); break;
+            case "TextOpacityDown": Step(SldTextOpacity, -5); break;
+            case "TextOpacityUp": Step(SldTextOpacity, +5); break;
             case "MarginXDown": Step(SldMarginX, -4); break;
             case "MarginXUp": Step(SldMarginX, +4); break;
             case "MarginYDown": Step(SldMarginY, -4); break;
@@ -312,7 +316,8 @@ public partial class SettingsWindow : Window
     {
         TxtAnswerFontSizeValue.Text = $"{SldAnswerFontSize.Value:0}";
         TxtQuestionFontSizeValue.Text = $"{SldQuestionFontSize.Value:0}";
-        TxtOpacityValue.Text = $"{SldOverlayOpacity.Value:0}%";
+        TxtBackgroundOpacityValue.Text = $"{SldBackgroundOpacity.Value:0}%";
+        TxtTextOpacityValue.Text = $"{SldTextOpacity.Value:0}%";
         TxtMarginXValue.Text = $"{SldMarginX.Value:0}";
         TxtMarginYValue.Text = $"{SldMarginY.Value:0}";
         TxtAutoSilenceValue.Text = $"{SldAutoSilence.Value:0.0} 秒";
@@ -336,7 +341,8 @@ public partial class SettingsWindow : Window
             TxtPreviewAnswer.Foreground = new SolidColorBrush(answerColor);
         }
 
-        PreviewCard.Opacity = Math.Clamp(SldOverlayOpacity.Value / 100.0, 0.05, 1.0);
+        PreviewBackground.Opacity = SldBackgroundOpacity.Value / 100;
+        PreviewText.Opacity = SldTextOpacity.Value / 100;
     }
 
     private static bool TryResolveColor(string? text, out Color color)
@@ -584,7 +590,7 @@ public partial class SettingsWindow : Window
 
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(70));
             _busyCts = cts;
             using var catalog = new OpenAiCompatibleModelCatalog();
             var result = await catalog.TestChatAsync(baseUrl, apiKey, model, cts.Token);
@@ -600,13 +606,13 @@ public partial class SettingsWindow : Window
             }
 
             var reply = result.Reply.Length <= 40 ? result.Reply : result.Reply[..40] + "…";
-            SetStatus($"模型可用 · 往返 {result.LatencyMs} ms · 回复：{reply}", StatusTone.Success);
+            SetStatus($"流式连接可用 · 首字 {result.FirstTextMs ?? result.LatencyMs} ms · 总计 {result.LatencyMs} ms · 回复：{reply}", StatusTone.Success);
         }
         catch (OperationCanceledException)
         {
             if (!_closed)
             {
-                SetStatus("测试调用超时（25 秒），请检查网络、代理或模型是否可用。", StatusTone.Error);
+                SetStatus("流式测试已取消或超时，请检查网络、代理或模型是否可用。", StatusTone.Error);
             }
         }
         catch (Exception ex)
@@ -882,6 +888,7 @@ public partial class SettingsWindow : Window
         _overlayDraft = BuildOverlayDraft(color);
         TxtAnswerColor.Text = color;
         _autoDraft.Enabled = ChkAutoAnswer.IsChecked == true;
+        _autoDraft.ExtractAndCorrectQuestion = ChkCorrectQuestion.IsChecked == true;
         _autoDraft.SilenceMs = (int)Math.Round(SldAutoSilence.Value * 1000.0);
         return true;
     }
@@ -907,7 +914,8 @@ public partial class SettingsWindow : Window
         draft.FontFamily = string.IsNullOrEmpty(fontName) ? "Microsoft YaHei UI" : fontName;
         draft.AnswerFontSize = Math.Round(SldAnswerFontSize.Value);
         draft.QuestionFontSize = Math.Round(SldQuestionFontSize.Value);
-        draft.Opacity = Math.Clamp(SldOverlayOpacity.Value / 100.0, 0.05, 1.0);
+        draft.BackgroundOpacity = SldBackgroundOpacity.Value / 100;
+        draft.TextOpacity = SldTextOpacity.Value / 100;
         draft.MarginX = Math.Round(SldMarginX.Value);
         draft.MarginY = Math.Round(SldMarginY.Value);
         draft.AnswerColor = answerColor;
@@ -925,6 +933,8 @@ public partial class SettingsWindow : Window
     private static OverlayOptions Clone(OverlayOptions source) => new()
     {
         Opacity = source.Opacity,
+        BackgroundOpacity = source.BackgroundOpacity,
+        TextOpacity = source.TextOpacity,
         PositionX = source.PositionX,
         PositionY = source.PositionY,
         Position = source.Position,
@@ -944,6 +954,7 @@ public partial class SettingsWindow : Window
     private static AutoAnswerOptions Clone(AutoAnswerOptions source) => new()
     {
         Enabled = source.Enabled,
+        ExtractAndCorrectQuestion = source.ExtractAndCorrectQuestion,
         SilenceMs = source.SilenceMs,
         MinChars = source.MinChars,
         CooldownMs = source.CooldownMs

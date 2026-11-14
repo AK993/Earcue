@@ -1,9 +1,11 @@
 namespace Earcue.Speech.Asr;
 
-/// <summary>一个可被 sherpa-onnx 加载的流式 transducer 模型文件集合。</summary>
+/// <summary>一个可被 sherpa-onnx 加载的流式模型文件集合。</summary>
 public sealed class AsrModelFiles
 {
     public string ModelId { get; init; } = string.Empty;
+
+    public AsrModelType ModelType { get; init; } = AsrModelType.Transducer;
 
     public string ModelDirectory { get; init; } = string.Empty;
 
@@ -20,7 +22,8 @@ public sealed class AsrModelFiles
     public string EncoderFileName => Path.GetFileName(Encoder);
 
     public bool IsComplete =>
-        File.Exists(Encoder) && File.Exists(Decoder) && File.Exists(Joiner) && File.Exists(Tokens);
+        File.Exists(Encoder) && File.Exists(Decoder) && File.Exists(Tokens) &&
+        (ModelType == AsrModelType.Paraformer || File.Exists(Joiner));
 }
 
 /// <summary>
@@ -55,8 +58,8 @@ public static class AsrModelLocator
     }
 
     /// <summary>
-    /// 在模型根目录下定位 <paramref name="modelId"/> 的 encoder/decoder/joiner/tokens。
-    /// 文件按 encoder*.onnx / decoder*.onnx / joiner*.onnx 自动发现，优先 int8 量化版本。
+    /// 定位 encoder/decoder/tokens，Transducer 还需要 joiner。
+    /// 按文件前缀自动发现，优先 int8 量化版本。
     /// </summary>
     public static bool TryLocate(
         string? modelId,
@@ -110,16 +113,18 @@ public static class AsrModelLocator
             return false;
         }
 
+        var modelType = AsrModelCatalog.Find(id)?.ModelType ?? AsrModelType.Transducer;
         var encoder = FindModelFile(dir, "encoder", preferInt8);
         var decoder = FindModelFile(dir, "decoder", preferInt8);
         var joiner = FindModelFile(dir, "joiner", preferInt8);
 
-        if (encoder is null || decoder is null || joiner is null)
+        var requiresJoiner = modelType == AsrModelType.Transducer;
+        if (encoder is null || decoder is null || (requiresJoiner && joiner is null))
         {
             var missing = new List<string>();
             if (encoder is null) missing.Add("encoder*.onnx");
             if (decoder is null) missing.Add("decoder*.onnx");
-            if (joiner is null) missing.Add("joiner*.onnx");
+            if (requiresJoiner && joiner is null) missing.Add("joiner*.onnx");
             error = $"模型目录不完整（缺少 {string.Join("、", missing)}）：{dir}";
             return false;
         }
@@ -127,10 +132,11 @@ public static class AsrModelLocator
         files = new AsrModelFiles
         {
             ModelId = id,
+            ModelType = modelType,
             ModelDirectory = dir,
             Encoder = encoder,
             Decoder = decoder,
-            Joiner = joiner,
+            Joiner = joiner ?? string.Empty,
             Tokens = tokens,
             IsInt8 = IsInt8File(encoder)
         };
