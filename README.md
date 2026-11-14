@@ -60,6 +60,7 @@ flowchart LR
 | 🔁 自动重试 | 失败后固定等待 2 秒继续请求，直到成功或主动停止 |
 | ⌨️ 手动提问 | 直接输入问题、重新回答、选中文字或一键复制回答 |
 | 📋 背景资料 | 选择角色，粘贴或导入简历，让回答结合已有资料 |
+| 📚 简历专业词 | 根据已保存的简历自动提取专业词，去重合并到现有词表，支持编辑与取消 |
 | 🛠️ 运行恢复 | 支持音频异常重连、识别失败提示、配置损坏备份及系统托盘 |
 
 <a id="quick-start"></a>
@@ -73,19 +74,25 @@ flowchart LR
 | 操作系统 | Windows 10 2004 或更新版本 / Windows 11 |
 | 系统架构 | x64（64 位） |
 | .NET 运行时 | 官方免安装包已包含 .NET 8 运行时 |
-| 语音识别 | 本地 CPU 推理，三套模型随包提供 |
+| 语音识别 | 本地 CPU 推理；完整版附带三套模型，Lite 按需下载 |
 | 网络 | 调用回答模型时需要能访问所配置的服务 |
 | 模型账号 | 准备自己的 API Key，调用费用按所选服务商规则计算 |
 
 ### 1. 下载并解压
 
-前往 **[Releases 下载页面](https://github.com/AK993/Earcue/releases/latest)**，选择 `Earcue-v0.1.8-win-x64.zip`。
+前往 **[Releases 下载页面](https://github.com/AK993/Earcue/releases/latest)**，v0.1.10 提供两种分发方式：
 
-- 📦 ZIP 约 **835 MiB**，完整解压后约 **1 GiB**。
-- 🧩 包含应用程序、.NET 运行时、三套 ASR 模型和空白用户配置。
+| 分发方式 | 文件 | 模型准备 |
+| --- | --- | --- |
+| 📦 完整版 | `Earcue-v0.1.10-win-x64.zip` | 内含三套模型，保留默认使用的 INT8 权重 |
+| 🪶 Lite 轻量版 | `Earcue-v0.1.10-win-x64-Lite.zip` | 包含 .NET 运行时，首次使用时在应用中按需下载模型 |
+
+v0.1.10 下载大小：**Lite 约 75.3 MiB，三模型完整版约 472.8 MiB**。完整版通过移除重复 FP32 权重缩小体积，默认使用的 INT8 推理权重保留。
+
+- 🧩 两种包均包含应用程序、.NET 运行时和空白用户配置。
 - ▶️ 完整解压到可写目录后，双击 `Earcue.App.exe` 启动。
 
-请保留解压后的目录结构，程序需要同目录的依赖文件与 `models` 文件夹。
+请保留解压后的目录结构与依赖文件；完整版还需要随包的 `models` 文件夹。
 
 <details>
 <summary>🔐 校验下载文件完整性</summary>
@@ -93,8 +100,8 @@ flowchart LR
 同时下载 Release 中的 `.sha256` 文件，在 ZIP 所在目录打开 PowerShell：
 
 ```powershell
-Get-FileHash .\Earcue-v0.1.8-win-x64.zip -Algorithm SHA256
-Get-Content .\Earcue-v0.1.8-win-x64.zip.sha256
+Get-FileHash .\Earcue-v0.1.10-win-x64-Lite.zip -Algorithm SHA256
+Get-Content .\Earcue-v0.1.10-win-x64-Lite.zip.sha256
 ```
 
 对比两处 SHA256，字符应完全一致，大小写不影响结果。
@@ -130,6 +137,37 @@ Get-Content .\Earcue-v0.1.8-win-x64.zip.sha256
 三套模型均在本地 CPU 上运行。实际识别速度和准确度受处理器、音质、口音与专有词影响，可使用同一段音频进行比较。ASR 负责把声音转换为文字；后续的问题提取和校正使用当前配置的回答模型。
 
 模型来源、固定下载地址与 SHA256 见 [ASR 模型清单](src/Earcue.Speech/Asr/asr-models.json)。
+
+### 🪶 按需下载模型
+
+Lite 首次开始聆听时，如果模型尚未安装，会打开语音识别设置。选择模型并点击 **「下载所选模型」**，即可查看进度和大小，支持随时取消。安装前会校验 SHA256；失败或取消时清理未完成内容，保留已有模型。
+
+默认缓存为 `%LOCALAPPDATA%\Earcue\models`，同一用户可在后续版本中复用。下载需要能访问 GitHub / Hugging Face。保存设置后点击「开始聆听」即可使用。
+
+### 📚 专业词与人名
+
+在 **「模型与设置」→「语音识别」→「专业词与人名」** 中，每行填写一个词，例如：
+
+```text
+语音识别
+灰度发布
+Kubernetes
+SQL Server
+```
+
+词表最多 200 个词，每词最多 64 字，重复词自动合并。保存后停止并重新开始聆听，新的解码词表生效。
+
+**根据简历自动填充：** 先在「面试资料」中填写或导入并保存简历，再点击词表上方的「根据简历自动填充」。程序使用当前回答模型提取最多 80 个专业词，校验词语在简历中实际出现后，去重合并到现有词表。手工词保留，总量上限为 200 个；可检查、编辑后保存。取消或提取失败时原词表保持不变。
+
+此操作会将已保存的简历文本发送至所选模型服务，不携带会议对话。简历最多 30,000 字符，提取前请配置可用的回答模型。
+
+| 模型 | 词表的作用 |
+| --- | --- |
+| 中文 Zipformer 14M | 使用束搜索增强可编码的中文词；其余词供问题校正参考 |
+| 双语 Zipformer | 使用束搜索增强可编码的中文、英文词组；其余词供问题校正参考 |
+| Paraformer INT8 | 当前模型不支持解码热词，词表用于后续问题校正参考 |
+
+增强强度可在 0.5～5 之间调整，默认 1.5；启用后 CPU 开销增加，过强可能引起误识别。三套模型均保留识别原文，开启自动提取与校正后，大模型可参考词表消歧。底层能力见 [sherpa-onnx 热词说明](https://k2-fsa.github.io/sherpa/onnx/hotwords/)。
 
 <a id="llm-settings"></a>
 
@@ -191,6 +229,7 @@ Get-Content .\Earcue-v0.1.8-win-x64.zip.sha256
 | 音频 | 在本机识别，不保存音频 |
 | 转录与上下文 | 提取问题和生成回答时，相关文字会发送给所配置的模型服务 |
 | 背景资料 | 保存在本机配置，相关内容随回答请求发送给模型服务 |
+| 专业词表 | 保存在本机配置；生成回答时作为术语参考发送给所选模型服务 |
 | API Key | 使用 Windows DPAPI 加密后保存 |
 | 运行日志 | 默认记录运行指标与错误，不记录识别正文；开启 `privacy.saveTranscript` 后会记录转录 |
 | 官方发布 ZIP | 使用空白用户配置，不包含个人 Key、简历、会议文本或日志 |
@@ -211,9 +250,9 @@ Get-Content .\Earcue-v0.1.8-win-x64.zip.sha256
 ## 💬 常见问题
 
 <details>
-<summary><b>为什么下载包接近 835 MiB？</b></summary>
+<summary><b>如何减少下载体积？</b></summary>
 
-完整包包含三套 ASR 模型和自带的 .NET 桌面运行时。解压后模型约 835 MiB，其余文件约 183 MiB，其中主要是运行时及推理依赖，应用自身代码约 0.7 MiB。源码仓库不包含模型权重和发布 ZIP，下载软件请使用 Releases。
+选择 Lite 轻量版，按需下载一套模型即可。完整版也已去掉重复的 FP32 权重，保留三套模型的 INT8 权重。两种包均自带 .NET 桌面运行时；源码仓库不包含模型权重和发布 ZIP。
 
 </details>
 
@@ -292,16 +331,22 @@ dotnet run --project src\Earcue.App\Earcue.App.csproj
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\download-asr-models.ps1 -Model all -InstallRoot tools\models
-powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Version 0.1.8
+powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Version 0.1.10 -Edition Both
+
+# 仅生成轻量版：无需提前准备模型
+powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Version 0.1.10 -Edition Lite
 ```
 
 输出结构：
 
 ```text
 publish/
-├── Earcue-v0.1.8-win-x64/            # 可直接运行的完整目录
-├── Earcue-v0.1.8-win-x64.zip         # 用于分发的免安装包
-└── Earcue-v0.1.8-win-x64.zip.sha256  # SHA256 校验文件
+├── Earcue-v0.1.10-win-x64/                 # 三模型完整版
+├── Earcue-v0.1.10-win-x64.zip
+├── Earcue-v0.1.10-win-x64.zip.sha256
+├── Earcue-v0.1.10-win-x64-Lite/            # 按需下载模型的轻量版
+├── Earcue-v0.1.10-win-x64-Lite.zip
+└── Earcue-v0.1.10-win-x64-Lite.zip.sha256
 ```
 
 脚本将 .NET 运行时与模型一并打包，并生成空白用户配置。目标版本已存在时会停止，请使用新的版本号或先整理旧包。源码仓库通过 `.gitignore` 排除本地模型、配置、日志和发布产物。

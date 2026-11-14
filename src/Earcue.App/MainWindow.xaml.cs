@@ -241,11 +241,12 @@ public partial class MainWindow : Window
         OpenModelSettings();
     }
 
-    private void OpenModelSettings()
+    private void OpenModelSettings(bool speechTab = false)
     {
         var originalOverlay = _config.Overlay;
         var previousAsrModel = _config.Asr.LoopbackModel;
-        var dialog = new SettingsWindow(_config.Llm, _config.Overlay, _config.AutoAnswer, _config.Asr) { Owner = this };
+        var dialog = new SettingsWindow(_config.Llm, _config.Overlay, _config.AutoAnswer, _config.Asr, _config.Profile.Resume) { Owner = this };
+        if (speechTab) dialog.SelectSpeechTab();
 
         // 设置页拖动透明度/字号/颜色时，实时应用到真实字幕卡
         dialog.OverlayPreviewChanged += options => _overlayManager.UpdateOptions(options);
@@ -330,6 +331,11 @@ public partial class MainWindow : Window
         }
 
         var recovering = CaptureErrorBanner.Visibility == Visibility.Visible;
+        if (!AsrModelLocator.TryLocate(_config.Asr.LoopbackModel, _config.Asr.ModelRoot, _config.Asr.UseInt8, out _, out _))
+        {
+            OpenModelSettings(speechTab: true);
+            return;
+        }
         _isStartingCapture = true;
         BtnToggleCapture.IsEnabled = false;
         BtnRetryCapture.IsEnabled = false;
@@ -362,6 +368,8 @@ public partial class MainWindow : Window
 
             AppendTranscript(
                 $"[系统] 本地 ASR 已加载：{_asrEngine.ModelId} · {_asrEngine.Files.EncoderFileName} · {loaded.ElapsedMs}ms");
+            if (_config.Asr.Hotwords.Count > 0)
+                AppendTranscript($"[系统] 专业词：解码增强 {_asrEngine.Hotwords.Applied} 个，其他 {_asrEngine.Hotwords.Skipped} 个仅供问题校正参考。词表不会替换识别原文。");
 
             var source = new WasapiLoopbackSource();
             _loopbackSource = source;
@@ -814,7 +822,8 @@ public partial class MainWindow : Window
                 MaxResumeChars = _config.Profile.MaxResumeChars,
                 RecentContext = request.Context,
                 TriggerQuestion = request.QuestionOverride ?? latest,
-                ExtractAndCorrectQuestion = extractQuestion
+                ExtractAndCorrectQuestion = extractQuestion,
+                ProfessionalTerms = _config.Asr.Hotwords
             };
 
             long? firstTokenMs = null;

@@ -144,6 +144,9 @@ public sealed class AsrOptions
     [JsonPropertyName("hotwords")]
     public List<string> Hotwords { get; set; } = new();
 
+    [JsonPropertyName("hotwordsScore")]
+    public float HotwordsScore { get; set; } = 1.5f;
+
     /// <summary>sherpa-onnx 推理线程数；14M 模型在 2 线程下通常已可实时。</summary>
     [JsonPropertyName("numThreads")]
     public int NumThreads { get; set; } = 2;

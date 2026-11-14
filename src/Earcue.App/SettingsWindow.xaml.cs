@@ -7,6 +7,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using Earcue.Brain.Llm;
+using Earcue.Brain.Understanding;
 using Earcue.Core.Configuration;
 using Earcue.Core.Models;
 using Earcue.Core.Security;
@@ -39,9 +40,11 @@ public partial class SettingsWindow : Window
     private bool _busy;
     private bool _closed;
     private CancellationTokenSource? _busyCts;
+    private readonly string _resumeText;
 
-    public SettingsWindow(LlmOptions current, OverlayOptions overlay, AutoAnswerOptions autoAnswer, AsrOptions? asr = null)
+    public SettingsWindow(LlmOptions current, OverlayOptions overlay, AutoAnswerOptions autoAnswer, AsrOptions? asr = null, string? resumeText = null)
     {
+        _resumeText = resumeText ?? string.Empty;
         InitializeComponent();
 
         _draft = Clone(current);
@@ -90,6 +93,8 @@ public partial class SettingsWindow : Window
     public AutoAnswerOptions AutoAnswerResult => _autoDraft;
 
     public AsrOptions AsrResult => _asrDraft;
+
+    public void SelectSpeechTab() => SettingsTabs.SelectedIndex = 1;
 
     /// <summary>设置页每次调整外观时触发，用于主窗口实时应用到真实浮层。</summary>
     public event Action<OverlayOptions>? OverlayPreviewChanged;
@@ -143,8 +148,13 @@ public partial class SettingsWindow : Window
         UpdateOverlayPreview();
     }
 
-    private void LoadAsrDraft()
+    private void LoadAsrDraft(bool reloadVocabulary = true)
     {
+        if (reloadVocabulary)
+        {
+            TxtHotwords.Text = string.Join(Environment.NewLine, _asrDraft.Hotwords);
+            SldHotwordsScore.Value = float.IsFinite(_asrDraft.HotwordsScore) ? Math.Clamp(_asrDraft.HotwordsScore, 0.5f, 5f) : 1.5;
+        }
         var list = new List<AsrModelViewItem>();
         foreach (var descriptor in AsrModelCatalog.All)
         {
@@ -163,6 +173,7 @@ public partial class SettingsWindow : Window
         var selected = list.FirstOrDefault(m => string.Equals(m.Id, _asrDraft.LoopbackModel, StringComparison.OrdinalIgnoreCase)) ?? list.FirstOrDefault();
         CmbAsrModel.SelectedItem = selected;
         UpdateAsrStatusText(selected);
+        TxtModelDirectory.Text = "下载目录：" + AsrModelLocator.ResolveRoot(_asrDraft.ModelRoot);
     }
 
     private void CmbAsrModel_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -172,12 +183,14 @@ public partial class SettingsWindow : Window
             _asrDraft.LoopbackModel = item.Id;
             _asrDraft.MicModel = item.Id;
             UpdateAsrStatusText(item);
+            UpdateHotwordsHint();
         }
     }
 
     private void UpdateAsrStatusText(AsrModelViewItem? item)
     {
         if (item is null) return;
+        BtnDownloadAsr.IsEnabled = !_busy && !item.IsInstalled;
         if (item.IsInstalled)
         {
             TxtAsrModelStatus.Text = "模型已就绪。保存后重新启动采集即可切换，无需退出程序。";
@@ -185,10 +198,148 @@ public partial class SettingsWindow : Window
         }
         else
         {
-            TxtAsrModelStatus.Text = "模型文件不完整，请安装后再选择。完整版包含全部三套模型。";
+            TxtAsrModelStatus.Text = "尚未安装。点击下载所选模型，校验完成后即可使用；需能访问 GitHub / Hugging Face。";
             TxtAsrModelStatus.Foreground = InfoBrush;
         }
     }
+
+    private void Hotwords_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (!_initializing) UpdateHotwordsHint();
+    }
+
+    private void HotwordsScore_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (!_initializing) UpdateHotwordsHint();
+    }
+
+    private void UpdateHotwordsHint()
+    {
+        if (_asrDraft is null || TxtHotwordsHint is null) return;
+        var descriptor = AsrModelCatalog.Find(_asrDraft.LoopbackModel);
+        var mode = descriptor?.ModelType == AsrModelType.Paraformer
+            ? "Paraformer 不支持解码热词，词表用于大模型问题校正参考。"
+            : $"Zipformer 使用束搜索增强可编码词，强度 {SldHotwordsScore.Value:0.0}；不支持的词仅供问题校正参考。启用后 CPU 开销会增加，强度过高可能误识别。";
+        TxtHotwordsHint.Text = mode + " 原始转录保留，问题校正需开启自动提取并校正问题。";
+    }
+
+    private async void BtnDownloadAsr_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || CmbAsrModel.SelectedItem is not AsrModelViewItem item) return;
+        var descriptor = AsrModelCatalog.Find(item.Id);
+        if (descriptor is null) return;
+        BeginBusy();
+        AsrDownloadProgress.Value = 0;
+        AsrDownloadProgress.Visibility = Visibility.Visible;
+        BtnCancelAsrDownload.Visibility = Visibility.Visible;
+        TxtAsrDownloadProgress.Text = "正在连接下载源…";
+        using var cts = new CancellationTokenSource();
+        _busyCts = cts;
+        try
+        {
+            var progress = new Progress<ModelInstallProgress>(value =>
+            {
+                if (_closed || cts.IsCancellationRequested) return;
+                AsrDownloadProgress.Value = value.Percent;
+                TxtAsrDownloadProgress.Text = $"{value.Stage} · {value.Percent:0}% · {value.DownloadedBytes / 1048576.0:0.0}/{value.TotalBytes / 1048576.0:0.0} MiB";
+            });
+            await new AsrModelInstaller().InstallAsync(descriptor, AsrModelLocator.ResolveRoot(_asrDraft.ModelRoot), progress, cts.Token);
+            if (_closed) return;
+            // Refresh readiness without discarding unsaved vocabulary edits.
+            LoadAsrDraft(reloadVocabulary: false);
+            TxtAsrDownloadProgress.Text = "模型已安装并通过校验。保存设置后，点击开始聆听。";
+        }
+        catch (OperationCanceledException)
+        {
+            if (!_closed) TxtAsrDownloadProgress.Text = "下载已取消，已安装模型保持不变。可重新点击下载。";
+        }
+        catch (Exception error)
+        {
+            if (!_closed) TxtAsrDownloadProgress.Text = "安装失败：" + error.Message;
+        }
+        finally
+        {
+            _busyCts = null;
+            if (!_closed)
+            {
+                BtnCancelAsrDownload.Visibility = Visibility.Collapsed;
+                EndBusy();
+            }
+        }
+    }
+
+    private void BtnCancelAsrDownload_Click(object sender, RoutedEventArgs e) => _busyCts?.Cancel();
+
+    private async void BtnExtractResumeWords_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        if (string.IsNullOrWhiteSpace(_resumeText))
+        {
+            TxtResumeWordsStatus.Text = "请先在【面试资料】中填写并保存简历，再回到这里提取。";
+            return;
+        }
+        if (_resumeText.Length > ResumeVocabularyExtractor.MaxResumeLength)
+        {
+            TxtResumeWordsStatus.Text = $"简历超过 {ResumeVocabularyExtractor.MaxResumeLength:N0} 字符，请精简后再提取。";
+            return;
+        }
+        List<string> existing;
+        try { existing = ProfessionalVocabulary.Parse(TxtHotwords.Text); }
+        catch (ArgumentException error) { TxtResumeWordsStatus.Text = error.Message; return; }
+        if (existing.Count == ProfessionalVocabulary.MaxWords)
+        {
+            TxtResumeWordsStatus.Text = "词表已满 200 个，请先删去不常用的词再提取。";
+            return;
+        }
+        if (!TryReadConnection(out var baseUrl, out var apiKey) || string.IsNullOrWhiteSpace(TxtModel.Text) ||
+            (apiKey.Length == 0 && !LlmEndpoints.IsLoopback(baseUrl)))
+        {
+            TxtResumeWordsStatus.Text = "请先在【回答模型】中填写有效的接口、模型和 API Key。";
+            return;
+        }
+        var options = Clone(_draft);
+        options.BaseUrl = baseUrl;
+        options.ApiKey = apiKey;
+        options.Model = TxtModel.Text.Trim();
+        options.MaxTokens = 2048;
+        BeginBusy();
+        TxtHotwords.IsReadOnly = true;
+        BtnCancelResumeWords.Visibility = Visibility.Visible;
+        TxtResumeWordsStatus.Text = "正在根据已保存的简历提取专业词…";
+        using var cts = new CancellationTokenSource();
+        _busyCts = cts;
+        try
+        {
+            var words = await new ResumeVocabularyExtractor(new OpenAiCompatibleLlmClient(options)).ExtractAsync(_resumeText, cts.Token);
+            if (_closed || cts.IsCancellationRequested) return;
+            var merged = ResumeVocabularyExtractor.Merge(existing, words);
+            TxtHotwords.Text = string.Join(Environment.NewLine, merged.Words);
+            TxtResumeWordsStatus.Text = words.Count == 0
+                ? "未提取到有效专业词，原词表保留。"
+                : $"新增 {merged.Added} 个，当前共 {merged.Words.Count} 个" +
+                  (merged.Omitted > 0 ? $"；受 200 个上限影响，另有 {merged.Omitted} 个未加入" : "") + "。可编辑后点击【保存并应用】。";
+        }
+        catch (OperationCanceledException)
+        {
+            if (!_closed) TxtResumeWordsStatus.Text = "提取已取消，原词表保留。";
+        }
+        catch (Exception error)
+        {
+            if (!_closed) TxtResumeWordsStatus.Text = "提取失败，原词表保留：" + error.Message;
+        }
+        finally
+        {
+            _busyCts = null;
+            if (!_closed)
+            {
+                TxtHotwords.IsReadOnly = false;
+                BtnCancelResumeWords.Visibility = Visibility.Collapsed;
+                EndBusy();
+            }
+        }
+    }
+
+    private void BtnCancelResumeWords_Click(object sender, RoutedEventArgs e) => _busyCts?.Cancel();
 
     private static int AutoHideIndex(int seconds)
     {
@@ -679,6 +830,16 @@ public partial class SettingsWindow : Window
             return;
         }
 
+        try { _asrDraft.Hotwords = ProfessionalVocabulary.Parse(TxtHotwords.Text); }
+        catch (ArgumentException error)
+        {
+            SettingsTabs.SelectedIndex = 1;
+            TxtHotwordsHint.Text = error.Message;
+            TxtHotwords.Focus();
+            return;
+        }
+        _asrDraft.HotwordsScore = (float)SldHotwordsScore.Value;
+
         var model = TxtModel.Text.Trim();
         if (model.Length == 0)
         {
@@ -737,6 +898,9 @@ public partial class SettingsWindow : Window
     private void BeginBusy()
     {
         _busy = true;
+        BtnExtractResumeWords.IsEnabled = false;
+        BtnDownloadAsr.IsEnabled = false;
+        CmbAsrModel.IsEnabled = false;
         BtnFetchModels.IsEnabled = false;
         BtnTestModel.IsEnabled = false;
         BtnSave.IsEnabled = false;
@@ -746,6 +910,9 @@ public partial class SettingsWindow : Window
     private void EndBusy()
     {
         _busy = false;
+        BtnExtractResumeWords.IsEnabled = true;
+        CmbAsrModel.IsEnabled = true;
+        if (CmbAsrModel.SelectedItem is AsrModelViewItem item) BtnDownloadAsr.IsEnabled = !item.IsInstalled;
         BtnFetchModels.IsEnabled = true;
         BtnTestModel.IsEnabled = true;
         BtnSave.IsEnabled = true;
@@ -980,6 +1147,7 @@ public partial class SettingsWindow : Window
         MicModel = source.MicModel,
         ModelRoot = source.ModelRoot,
         Hotwords = new List<string>(source.Hotwords),
+        HotwordsScore = source.HotwordsScore,
         NumThreads = source.NumThreads,
         UseInt8 = source.UseInt8,
         DecodingMethod = source.DecodingMethod

@@ -131,7 +131,7 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,8,0">
                     <StackPanel>
                         <Border Background="#E6F2EB" CornerRadius="12" Padding="18" Margin="0,0,0,16">
-                            <TextBlock Text="三套模型均在本机运行。选择后保存，重新启动采集即可切换。" Foreground="#286A50" TextWrapping="Wrap" />
+                            <TextBlock Text="模型在本机运行。轻量版可在这里按需下载，安装后保存并开始聆听；切换模型或专业词后需重新启动采集。" Foreground="#286A50" TextWrapping="Wrap" />
                         </Border>
                         <Border Style="{StaticResource CardBorder}" Margin="0,0,0,16">
                             <StackPanel>
@@ -153,6 +153,29 @@
                                     </StackPanel>
                                 </Grid>
                                 <TextBlock x:Name="TxtAsrModelStatus" Style="{StaticResource HintText}" Margin="0,8,0,0" Foreground="#157D64" />
+                                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                    <Button x:Name="BtnDownloadAsr" Content="下载所选模型" Click="BtnDownloadAsr_Click" />
+                                    <Button x:Name="BtnCancelAsrDownload" Content="取消下载" Click="BtnCancelAsrDownload_Click" Margin="10,0,0,0" Visibility="Collapsed" />
+                                </StackPanel>
+                                <ProgressBar x:Name="AsrDownloadProgress" Height="6" Margin="0,12,0,0" Maximum="100" Visibility="Collapsed" />
+                                <TextBlock x:Name="TxtAsrDownloadProgress" Style="{StaticResource HintText}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                                <TextBlock x:Name="TxtModelDirectory" Style="{StaticResource HintText}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource CardBorder}" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock Text="专业词与人名" Style="{StaticResource SectionTitle}" />
+                                <StackPanel Orientation="Horizontal" Margin="0,10,0,6">
+                                    <Button x:Name="BtnExtractResumeWords" Content="根据简历自动填充" Click="BtnExtractResumeWords_Click" />
+                                    <Button x:Name="BtnCancelResumeWords" Content="取消提取" Click="BtnCancelResumeWords_Click" Margin="10,0,0,0" Visibility="Collapsed" />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource HintText}" Text="使用当前回答模型提取已保存简历中的专业词，简历文本会发送至该服务。自动合并，保留已有词，可编辑后保存。" TextWrapping="Wrap" />
+                                <TextBlock x:Name="TxtResumeWordsStatus" Style="{StaticResource HintText}" Margin="0,6,0,6" TextWrapping="Wrap" />
+                                <TextBlock Style="{StaticResource HintText}" Text="每行一个词，例如公司名、人名或技术术语。最多 200 个，每个最多 64 字。留空使用普通识别。" TextWrapping="Wrap" />
+                                <TextBox x:Name="TxtHotwords" Height="130" Margin="0,12,0,0" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" TextChanged="Hotwords_Changed" />
+                                <TextBlock Text="解码增强强度" Style="{StaticResource FieldLabel}" Margin="0,14,0,0" />
+                                <Slider x:Name="SldHotwordsScore" Minimum="0.5" Maximum="5" TickFrequency="0.5" IsSnapToTickEnabled="True" ValueChanged="HotwordsScore_Changed" />
+                                <TextBlock x:Name="TxtHotwordsHint" Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,8,0,0" />
                             </StackPanel>
                         </Border>
                     </StackPanel>

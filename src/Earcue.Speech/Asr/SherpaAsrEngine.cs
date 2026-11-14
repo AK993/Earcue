@@ -81,6 +81,19 @@ public sealed class SherpaAsrEngine : IAsrEngine
         config.ModelConfig.Provider = "cpu";
         config.ModelConfig.NumThreads = Math.Clamp(options.NumThreads, 1, 8);
         config.ModelConfig.Debug = 0;
+        Hotwords = AsrHotwordConfiguration.Apply(ref config, options, files);
+
+        // The Windows C# binding marshals strings as ANSI. Pass UTF-8 vocabulary via a file
+        // so Chinese terms reach the native decoder intact. The recognizer reads it at construction.
+        string? hotwordsFile = null;
+        if (Hotwords.Applied > 0)
+        {
+            hotwordsFile = Path.Combine(Path.GetTempPath(), "earcue-hotwords-" + Guid.NewGuid().ToString("N") + ".txt");
+            File.WriteAllText(hotwordsFile, config.HotwordsBuf, new System.Text.UTF8Encoding(false));
+            config.HotwordsFile = hotwordsFile;
+            config.HotwordsBuf = string.Empty;
+            config.HotwordsBufSize = 0;
+        }
 
         var stopwatch = Stopwatch.StartNew();
         try
@@ -93,6 +106,15 @@ public sealed class SherpaAsrEngine : IAsrEngine
             throw new InvalidOperationException(
                 $"加载本地 ASR 模型失败（{files.ModelId}）：{ex.Message}",
                 ex);
+        }
+        finally
+        {
+            if (hotwordsFile is not null)
+            {
+                try { File.Delete(hotwordsFile); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
         }
 
         stopwatch.Stop();
@@ -114,6 +136,7 @@ public sealed class SherpaAsrEngine : IAsrEngine
     public AsrModelFiles Files { get; }
 
     public TimeSpan LoadTime { get; }
+    public AsrHotwordResult Hotwords { get; }
 
     public bool IsDisposed => _disposed;
 
