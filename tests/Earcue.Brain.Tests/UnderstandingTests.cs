@@ -56,4 +56,37 @@ public class UnderstandingTests
         Assert.Equal(AudioRole.Local, turns[0].Role);
         Assert.Equal(AudioRole.Remote, turns[1].Role);
     }
+
+    [Fact]
+    public void FollowUpIncludesActualAnswerEvenWhenItTakesLongerThanNinetySeconds()
+    {
+        var now = DateTime.UtcNow;
+        var buffer = new DialogueContextBuffer();
+        buffer.AddTurn(AudioRole.Remote, "你们怎么做灰度发布？", now.AddMinutes(-3));
+        buffer.AddTurn(AudioRole.Remote, "为什么选这个比例？", now);
+        buffer.AddTurn(AudioRole.Local, "我们每批先放百分之五。", now.AddMinutes(-2));
+
+        var context = buffer.GetRecentTurns();
+        Assert.Equal(AudioRole.Local, context[1].Role);
+        var prompt = new Prompt { Mode = PromptMode.AutoResponse, RecentContext = context, TriggerQuestion = context[2].Text };
+        Assert.Contains("[我] 我们每批先放百分之五。", prompt.BuildUserMessage());
+        Assert.EndsWith("为什么选这个比例？", prompt.BuildUserMessage().Split("【任务】")[0].TrimEnd());
+
+        buffer.RemoveLocalTurns();
+        Assert.All(buffer.GetRecentTurns(), turn => Assert.Equal(AudioRole.Remote, turn.Role));
+    }
+
+    [Fact]
+    public void PlaybackFilter_DoesNotSuppressDistinctOrLaterFollowUps()
+    {
+        var now = DateTime.UtcNow;
+        var buffer = new DialogueContextBuffer();
+        buffer.AddTurn(AudioRole.Local, "我们每批先放百分之五。", now);
+
+        Assert.True(buffer.IsLikelyLocalPlayback("我们每批先放百分之五", now.AddMilliseconds(200)));
+        Assert.False(buffer.IsLikelyLocalPlayback("为什么每批先放百分之五？", now.AddMilliseconds(300)));
+        Assert.False(buffer.IsLikelyLocalPlayback("我们每批先放百分之五", now.AddSeconds(4)));
+        Assert.False(buffer.IsLikelyLocalPlayback("我们每批先放百分之五", now.AddMilliseconds(-400)));
+        Assert.False(buffer.IsLikelyLocalPlayback("我们每批先放百分之五", now.AddMilliseconds(20)));
+    }
 }

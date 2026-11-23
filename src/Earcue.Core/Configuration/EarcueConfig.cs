@@ -393,6 +393,10 @@ public sealed class OverlayOptions
 
 public sealed class MicOptions
 {
+    // Older configs may have enabled=true even though microphone capture was never wired up.
+    [JsonPropertyName("captureForContext")]
+    public bool CaptureForContext { get; set; }
+
     [JsonPropertyName("enabled")]
     public bool Enabled { get; set; } = true;
 

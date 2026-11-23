@@ -4,7 +4,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.10',
+    [string]$Version = '0.1.11',
     [string]$ModelSource = '',
     [ValidateSet('Full', 'Lite', 'Both')]
     [string]$Edition = 'Both'
@@ -99,6 +99,7 @@ foreach ($flavor in $editions) {
         asr = @{ modelRoot = $(if ($flavor -eq 'Full') { 'models' } else { '' }); loopbackModel = 'sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23'; hotwords = @(); hotwordsScore = 1.5 }
         llm = @{ apiKeyProtected = '' }
         profile = @{ resume = '' }
+        mic = @{ captureForContext = $false }
         privacy = @{ saveTranscript = $false; diagnosticMode = $false }
     }
     $config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $target 'config.json') -Encoding UTF8

@@ -27,13 +27,15 @@ public class CaptureLifecycleTests
         source.Stop(); // 失败后仍可安全清理。
     }
 
-    [Fact]
-    public async Task Reconnect_KeepsFrameTimestampsIncreasing()
+    [Theory]
+    [InlineData(AudioRole.Remote)]
+    [InlineData(AudioRole.Local)]
+    public async Task Reconnect_PreservesSpeakerRoleAndIncreasingTimestamps(AudioRole role)
     {
         var first = new FakeCapture();
         var second = new FakeCapture();
         var attempts = 0;
-        using var source = new WasapiLoopbackSource(() => ++attempts == 1 ? first : second, TimeSpan.Zero, 3);
+        using var source = new WasapiLoopbackSource(() => ++attempts == 1 ? first : second, TimeSpan.Zero, 3, role);
         var before = new TaskCompletionSource<AudioFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
         var after = new TaskCompletionSource<AudioFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
         var reconnected = false;
@@ -44,7 +46,7 @@ public class CaptureLifecycleTests
         };
         source.StatusChanged += status =>
         {
-            if (status.Contains("重连成功")) Volatile.Write(ref reconnected, true);
+            if (status.Contains("重连成功") || status == "麦克风已重连") Volatile.Write(ref reconnected, true);
         };
         source.Start();
         var initial = await before.Task.WaitAsync(TimeSpan.FromSeconds(3));
@@ -53,6 +55,8 @@ public class CaptureLifecycleTests
 
         Assert.True(source.IsRunning);
         Assert.True(first.Disposed);
+        Assert.Equal(role, initial.Role);
+        Assert.Equal(role, resumed.Role);
         Assert.True(resumed.Timestamp > initial.Timestamp);
         source.Stop();
         Assert.True(second.Disposed);

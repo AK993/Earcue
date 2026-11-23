@@ -42,7 +42,8 @@ public partial class SettingsWindow : Window
     private CancellationTokenSource? _busyCts;
     private readonly string _resumeText;
 
-    public SettingsWindow(LlmOptions current, OverlayOptions overlay, AutoAnswerOptions autoAnswer, AsrOptions? asr = null, string? resumeText = null)
+    public SettingsWindow(LlmOptions current, OverlayOptions overlay, AutoAnswerOptions autoAnswer,
+        AsrOptions? asr = null, string? resumeText = null, bool rememberMyAnswers = false)
     {
         _resumeText = resumeText ?? string.Empty;
         InitializeComponent();
@@ -59,6 +60,7 @@ public partial class SettingsWindow : Window
         LoadDraft();
         LoadOverlayDraft();
         LoadAsrDraft();
+        ChkRememberMyAnswers.IsChecked = rememberMyAnswers;
 
         // 小屏 / 高缩放下让窗口不超出工作区，内容区可滚动，底部按钮始终可见
         var workArea = SystemParameters.WorkArea;
@@ -93,6 +95,8 @@ public partial class SettingsWindow : Window
     public AutoAnswerOptions AutoAnswerResult => _autoDraft;
 
     public AsrOptions AsrResult => _asrDraft;
+
+    public bool RememberMyAnswers => ChkRememberMyAnswers.IsChecked == true;
 
     public void SelectSpeechTab() => SettingsTabs.SelectedIndex = 1;
 

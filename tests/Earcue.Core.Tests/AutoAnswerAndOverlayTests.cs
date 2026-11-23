@@ -1,11 +1,21 @@
 using Earcue.Core.Configuration;
 using Earcue.Core.Models;
+using System.Text.Json;
 using Xunit;
 
 namespace Earcue.Core.Tests;
 
 public class AutoAnswerAndOverlayTests
 {
+    [Fact]
+    public void MicrophoneContext_RequiresExplicitOptInEvenWithLegacySettings()
+    {
+        var legacy = JsonSerializer.Deserialize<EarcueConfig>("""{"mic":{"enabled":true,"echoGate":true}}""");
+        Assert.False(legacy!.Mic.CaptureForContext);
+        legacy.Mic.CaptureForContext = true;
+        Assert.True(JsonSerializer.Deserialize<EarcueConfig>(JsonSerializer.Serialize(legacy))!.Mic.CaptureForContext);
+    }
+
     [Fact]
     public void Prompt_AutoMode_SendsWholeContextAndSupportsNonQuestions()
     {

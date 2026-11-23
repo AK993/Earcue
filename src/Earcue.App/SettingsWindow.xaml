@@ -371,6 +371,8 @@
                                 <TextBlock Style="{StaticResource HintText}" Margin="0,4,0,0" Text="音频停顿且识别完成后，结合最近对话生成回答建议。" />
                                 <CheckBox x:Name="ChkCorrectQuestion" Content="自动提取并校正问题" Margin="0,20,0,0" Checked="OverlayCheck_Changed" Unchecked="OverlayCheck_Changed" />
                                 <TextBlock Style="{StaticResource HintText}" Margin="0,8,0,0" Text="合并本轮被拆开的句子，整理口语重复，并结合上下文校正明显识别错误。校正后直接回答，原文保留供核对；不确定词会提示。" />
+                                <CheckBox x:Name="ChkRememberMyAnswers" Content="记住我的回答（使用默认麦克风）" Margin="0,20,0,0" />
+                                <TextBlock Style="{StaticResource HintText}" Margin="0,8,0,0" Text="下次开始聆听时启用。本机识别我的发言，追问时把近期转录作为上下文发送给回答模型。麦克风发言本身不会触发自动应答。" />
                             </StackPanel>
                         </Border>
                     </StackPanel>

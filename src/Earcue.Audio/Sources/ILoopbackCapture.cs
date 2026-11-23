@@ -1,4 +1,5 @@
 using NAudio.Wave;
+using NAudio.CoreAudioApi;
 
 namespace Earcue.Audio.Sources;
 
@@ -14,9 +15,19 @@ internal interface ILoopbackCapture : IDisposable
 
 internal sealed class WasapiCaptureAdapter : ILoopbackCapture
 {
-    private readonly WasapiLoopbackCapture _capture = new();
-    public WasapiCaptureAdapter()
+    private readonly WasapiCapture _capture;
+    public WasapiCaptureAdapter(bool microphone = false)
     {
+        if (microphone)
+        {
+            using var devices = new MMDeviceEnumerator();
+            using var device = devices.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
+            _capture = new WasapiCapture(device, useEventSync: false, audioBufferMillisecondsLength: 30);
+        }
+        else
+        {
+            _capture = new WasapiLoopbackCapture();
+        }
         _capture.DataAvailable += (_, e) => DataAvailable?.Invoke(this, e);
         _capture.RecordingStopped += (_, e) => RecordingStopped?.Invoke(this, e);
     }

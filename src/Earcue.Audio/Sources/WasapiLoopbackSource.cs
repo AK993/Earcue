@@ -11,6 +11,8 @@ public sealed class WasapiLoopbackSource : IAudioSource
 {
     private ILoopbackCapture? _capture;
     private readonly Func<ILoopbackCapture> _createCapture;
+    private readonly AudioRole _role;
+    private string DeviceLabel => _role == AudioRole.Local ? "麦克风" : "输出设备";
     private readonly TimeSpan _reconnectDelay;
     private readonly int _maxReconnectAttempts;
     private AudioRingBuffer? _ringBuffer;
@@ -33,15 +35,21 @@ public sealed class WasapiLoopbackSource : IAudioSource
     public event Action<string>? StatusChanged;
     public event Action<Exception>? CaptureFailed;
     public bool IsRunning => _isRunning;
+    public bool IsReceivingAudio => IsRunning && !IsReconnecting;
 
     public WasapiLoopbackSource() : this(() => new WasapiCaptureAdapter(), TimeSpan.FromSeconds(2), 20) { }
 
-    internal WasapiLoopbackSource(Func<ILoopbackCapture> createCapture, TimeSpan reconnectDelay, int maxReconnectAttempts)
+    public static WasapiLoopbackSource CreateMicrophone() =>
+        new(() => new WasapiCaptureAdapter(microphone: true), TimeSpan.FromSeconds(2), 20, AudioRole.Local);
+
+    internal WasapiLoopbackSource(Func<ILoopbackCapture> createCapture, TimeSpan reconnectDelay, int maxReconnectAttempts,
+        AudioRole role = AudioRole.Remote)
     {
         _token = _cts.Token;
         _createCapture = createCapture;
         _reconnectDelay = reconnectDelay;
         _maxReconnectAttempts = maxReconnectAttempts;
+        _role = role;
     }
 
     public void Start()
@@ -56,14 +64,14 @@ public sealed class WasapiLoopbackSource : IAudioSource
             _capture = _createCapture();
             var waveFormat = _capture.WaveFormat;
             AppLogger.Instance.Information(
-                "WASAPI 环回设备初始化成功: {SampleRate}Hz, {Channels}声道, {Bits}bit, 编码: {Encoding}",
+                "WASAPI {Device}初始化成功: {SampleRate}Hz, {Channels}声道, {Bits}bit, 编码: {Encoding}",
+                DeviceLabel,
                 waveFormat.SampleRate,
                 waveFormat.Channels,
                 waveFormat.BitsPerSample,
                 waveFormat.Encoding);
 
-            bool isFloat = waveFormat.Encoding == WaveFormatEncoding.IeeeFloat;
-            _converter = new AudioFormatConverter(waveFormat.SampleRate, waveFormat.Channels, isFloat);
+            _converter = CreateConverter(waveFormat);
             _ringBuffer = new AudioRingBuffer(1024 * 512); // 512KB
 
             _capture.DataAvailable += OnDataAvailable;
@@ -75,7 +83,7 @@ public sealed class WasapiLoopbackSource : IAudioSource
             _workerThread = new Thread(ProcessLoop)
             {
                 IsBackground = true,
-                Name = "Earcue.LoopbackWorker",
+                Name = $"Earcue.Audio.{_role}",
                 Priority = ThreadPriority.AboveNormal
             };
 
@@ -85,7 +93,7 @@ public sealed class WasapiLoopbackSource : IAudioSource
         }
         catch (Exception ex)
         {
-            AppLogger.Instance.Error(ex, "启动 WASAPI 环回采集失败");
+            AppLogger.Instance.Error(ex, "启动 WASAPI {Device}采集失败", DeviceLabel);
             Stop();
             throw;
         }
@@ -103,7 +111,7 @@ public sealed class WasapiLoopbackSource : IAudioSource
         if (!ReferenceEquals(sender, _capture)) return;
         if (e.Exception != null)
         {
-            AppLogger.Instance.Warning(e.Exception, "WASAPI 环回采集异常停止，尝试重启...");
+            AppLogger.Instance.Warning(e.Exception, "WASAPI {Device}采集异常停止，尝试重启", DeviceLabel);
         }
 
         if (IsRunning && !_token.IsCancellationRequested)
@@ -120,8 +128,8 @@ public sealed class WasapiLoopbackSource : IAudioSource
             return;
         }
 
-        StatusChanged?.Invoke("音频已断开，正在重连默认输出设备…");
-        AppLogger.Instance.Warning("WASAPI 环回音频流异常断开，正在尝试自动重连默认输出设备...");
+        StatusChanged?.Invoke($"音频已断开，正在重连默认{DeviceLabel}…");
+        AppLogger.Instance.Warning("WASAPI 音频流异常断开，正在重连默认{Device}", DeviceLabel);
 
         var maxAttempts = _maxReconnectAttempts; // 默认持续重试约 40 秒
         for (int attempt = 1; attempt <= maxAttempts && IsRunning && !_token.IsCancellationRequested; attempt++)
@@ -157,11 +165,10 @@ public sealed class WasapiLoopbackSource : IAudioSource
 
                     newCapture = _createCapture();
                     var waveFormat = newCapture.WaveFormat;
-                    bool isFloat = waveFormat.Encoding == WaveFormatEncoding.IeeeFloat;
 
                     lock (_processingGate)
                     {
-                        _converter = new AudioFormatConverter(waveFormat.SampleRate, waveFormat.Channels, isFloat);
+                        _converter = CreateConverter(waveFormat);
                         _ringBuffer?.Clear();
                         // 保持全流时间戳单调递增，跳过重连期间的空缺，不突发补发几十秒静音。
                         _totalSamplesDispatched = Math.Max(_totalSamplesDispatched,
@@ -175,9 +182,10 @@ public sealed class WasapiLoopbackSource : IAudioSource
                     newCapture.StartRecording();
 
                     Interlocked.Exchange(ref _reconnecting, 0);
-                    StatusChanged?.Invoke("音频重连成功，正在监听并识别系统声音");
+                    StatusChanged?.Invoke(_role == AudioRole.Local ? "麦克风已重连" : "音频重连成功，正在监听并识别系统声音");
                     AppLogger.Instance.Information(
-                        "WASAPI 环回设备重连成功: {SampleRate}Hz, {Channels}声道, {Bits}bit (第 {Attempt} 次重试生效)",
+                        "WASAPI {Device}重连成功: {SampleRate}Hz, {Channels}声道, {Bits}bit (第 {Attempt} 次重试生效)",
+                        DeviceLabel,
                         waveFormat.SampleRate,
                         waveFormat.Channels,
                         waveFormat.BitsPerSample,
@@ -201,9 +209,17 @@ public sealed class WasapiLoopbackSource : IAudioSource
         Interlocked.Exchange(ref _reconnecting, 0);
         if (IsRunning && !_token.IsCancellationRequested)
         {
-            AppLogger.Instance.Error("WASAPI 环回重连超出最大尝试次数，未能自动恢复音频设备");
-            FailCapture(new IOException("音频设备重连失败，已停止采集。恢复输出设备后请重新启动采集。"));
+            AppLogger.Instance.Error("WASAPI {Device}重连超出最大尝试次数", DeviceLabel);
+            FailCapture(new IOException($"{DeviceLabel}重连失败，已停止该路采集。"));
         }
+    }
+
+    private static AudioFormatConverter CreateConverter(WaveFormat format)
+    {
+        var isFloat = format.Encoding == WaveFormatEncoding.IeeeFloat && format.BitsPerSample == 32;
+        if (!isFloat && (format.Encoding != WaveFormatEncoding.Pcm || format.BitsPerSample != 16))
+            throw new NotSupportedException($"不支持的音频格式：{format.Encoding} {format.BitsPerSample} bit。");
+        return new AudioFormatConverter(format.SampleRate, format.Channels, isFloat);
     }
 
     private void ProcessLoop()
@@ -272,7 +288,7 @@ public sealed class WasapiLoopbackSource : IAudioSource
                     var timestamp = TimeSpan.FromSeconds((double)_totalSamplesDispatched / 16000.0);
 
                     var frame = new AudioFrame(
-                        role: AudioRole.Remote,
+                        role: _role,
                         data: frameData,
                         sampleRate: 16000,
                         channels: 1,
@@ -296,7 +312,7 @@ public sealed class WasapiLoopbackSource : IAudioSource
                     var timestamp = TimeSpan.FromSeconds((double)_totalSamplesDispatched / 16000.0);
 
                     var silenceFrame = new AudioFrame(
-                        role: AudioRole.Remote,
+                        role: _role,
                         data: _silenceFrame,
                         sampleRate: 16000,
                         channels: 1,

@@ -23,6 +23,10 @@ public partial class MainWindow : Window
     private readonly OverlayManager _overlayManager;
     private WasapiLoopbackSource? _loopbackSource;
     private SherpaAsrEngine? _asrEngine;
+    private WasapiLoopbackSource? _micSource;
+    private SherpaAsrEngine? _micAsrEngine;
+    private readonly AutoAnswerGate _micGate = new();
+    private readonly Queue<(string Text, DateTime Timestamp)> _possibleEchoes = new();
     private readonly DialogueContextBuffer _contextBuffer;
     private OpenAiCompatibleLlmClient _llmClient;
     private readonly DispatcherTimer _autoAnswerTimer;
@@ -33,6 +37,7 @@ public partial class MainWindow : Window
 
     private long _frameCount = 0;
     private int _asrFailed;
+    private int _micAsrFailed;
     private readonly AutoAnswerGate _answerGate = new();
     private bool _missingKeyNotified;
     private bool _isClosing;
@@ -245,7 +250,8 @@ public partial class MainWindow : Window
     {
         var originalOverlay = _config.Overlay;
         var previousAsrModel = _config.Asr.LoopbackModel;
-        var dialog = new SettingsWindow(_config.Llm, _config.Overlay, _config.AutoAnswer, _config.Asr, _config.Profile.Resume) { Owner = this };
+        var dialog = new SettingsWindow(_config.Llm, _config.Overlay, _config.AutoAnswer, _config.Asr,
+            _config.Profile.Resume, _config.Mic.CaptureForContext) { Owner = this };
         if (speechTab) dialog.SelectSpeechTab();
 
         // 设置页拖动透明度/字号/颜色时，实时应用到真实字幕卡
@@ -262,6 +268,20 @@ public partial class MainWindow : Window
         _config.Overlay = dialog.OverlayResult;
         _config.AutoAnswer = dialog.AutoAnswerResult;
         _config.Asr = dialog.AsrResult;
+        if (_config.Mic.CaptureForContext != dialog.RememberMyAnswers)
+        {
+            _config.Mic.CaptureForContext = dialog.RememberMyAnswers;
+            if (dialog.RememberMyAnswers)
+                AppendTranscript("[系统] 下次开始聆听时会启用麦克风，记住你的回答。");
+            else
+            {
+                _answerCts?.Cancel();
+                StopMicrophone();
+                CommitRemoteSpeech(DateTime.UtcNow, flush: true);
+                _contextBuffer.RemoveLocalTurns();
+                AppendTranscript("[系统] 已关闭麦克风，并从回答上下文中清除本次我方发言。");
+            }
+        }
 
         try
         {
@@ -344,21 +364,31 @@ public partial class MainWindow : Window
 
         try
         {
-            // 模型加载约 1 秒，放到后台线程避免卡住 UI
+            var loadMicrophone = _config.Mic.CaptureForContext;
+            var selectedModel = _config.Asr.LoopbackModel;
+            // Two recognizers own separate streams, so acoustic samples cannot cross speaker roles.
             var loaded = await Task.Run(() =>
             {
                 var watch = System.Diagnostics.Stopwatch.StartNew();
-                var engine = AsrEngineFactory.Create(_config, AudioRole.Remote);
-                return (Engine: engine, ElapsedMs: watch.ElapsedMilliseconds);
+                var engine = AsrEngineFactory.Create(_config, AudioRole.Remote, selectedModel);
+                SherpaAsrEngine? microphone = null;
+                if (loadMicrophone)
+                {
+                    try { microphone = AsrEngineFactory.Create(_config, AudioRole.Local, selectedModel); }
+                    catch (Exception ex) { AppLogger.Instance.Warning(ex, "麦克风 ASR 加载失败"); }
+                }
+                return (Engine: engine, Microphone: microphone, ElapsedMs: watch.ElapsedMilliseconds);
             });
 
             if (_isClosing)
             {
                 loaded.Engine.Dispose();
+                loaded.Microphone?.Dispose();
                 return;
             }
 
             _asrEngine = loaded.Engine;
+            _micAsrEngine = loaded.Microphone;
             Interlocked.Exchange(ref _asrFailed, 0);
             TxtAsrModel.Foreground = UiBrush("InkBrush");
 
@@ -384,12 +414,17 @@ public partial class MainWindow : Window
                 _lastAnswerAt = DateTime.MinValue;
                 _pendingChars = 0;
                 _pendingSpeech.Clear();
+                _possibleEchoes.Clear();
                 _autoAnswerPausedAfterError = false;
                 _autoAnswerPausedByUser = false;
                 _contextBuffer.Clear();
                 _latestSentence = string.Empty;
             }
             _loopbackSource.Start();
+            if (_config.Mic.CaptureForContext)
+                StartMicrophone();
+            else
+                StopMicrophone();
             _uptime.Restart();
             _frameCount = 0;
             _autoAnswerTimer.Start();
@@ -407,6 +442,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            StopMicrophone();
             _asrEngine?.Dispose();
             _asrEngine = null;
             _loopbackSource?.Dispose();
@@ -468,6 +504,8 @@ public partial class MainWindow : Window
         _loopbackSource = null;
         _uptime.Stop();
 
+        StopMicrophone(flush);
+        CommitRemoteSpeech(DateTime.UtcNow, flush: true);
         if (flush) FlushAsr();
 
         _asrEngine?.Dispose();
@@ -481,6 +519,93 @@ public partial class MainWindow : Window
         TxtAudioStatus.Foreground = UiBrush("WarningBrush");
         AppendTranscript("[系统] 采集与本地识别已停止。");
         RefreshAnswerState();
+    }
+
+    private void StartMicrophone()
+    {
+        var engine = _micAsrEngine;
+        if (engine is null)
+        {
+            AppendTranscript("[系统] 麦克风识别未启动，对方语音仍可识别。");
+            return;
+        }
+
+        var source = WasapiLoopbackSource.CreateMicrophone();
+        _micSource = source;
+        Interlocked.Exchange(ref _micAsrFailed, 0);
+        _micGate.Reset(DateTime.UtcNow);
+        source.FrameReady += frame => OnMicrophoneFrame(source, engine, frame);
+        source.StatusChanged += status => Dispatcher.BeginInvoke(() =>
+        {
+            if (_isClosing || source != _micSource) return;
+            _micGate.Reset(DateTime.UtcNow);
+            AppendTranscript($"[系统] {status}");
+        });
+        source.CaptureFailed += error => OnMicrophoneFailed(source, error);
+        try
+        {
+            source.Start();
+            AppendTranscript("[系统] 已开启「记住我的回答」：麦克风发言会标为 [我]，用于后续追问。");
+        }
+        catch (Exception ex)
+        {
+            StopMicrophone();
+            AppLogger.Instance.Warning(ex, "无法启动麦克风采集");
+            AppendTranscript("[系统] 无法打开默认麦克风，对方语音仍可识别。检查输入设备和麦克风权限后重新开始聆听。");
+        }
+    }
+
+    private void StopMicrophone(bool flush = false)
+    {
+        var source = _micSource;
+        _micSource = null;
+        source?.Dispose();
+        var engine = _micAsrEngine;
+        _micAsrEngine = null;
+        if (engine is null) return;
+        using (engine)
+        {
+            if (!flush) return;
+            foreach (var partial in engine.Flush())
+                HandleRecognizedSentence(AudioRole.Local, partial.Text, DateTime.UtcNow);
+        }
+    }
+
+    private void OnMicrophoneFailed(WasapiLoopbackSource source, Exception error)
+    {
+        if (!ReferenceEquals(source, _micSource) || Dispatcher.HasShutdownStarted ||
+            Interlocked.Exchange(ref _micAsrFailed, 1) != 0) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_isClosing || source != _micSource) return;
+            StopMicrophone();
+            AppLogger.Instance.Warning(error, "麦克风识别停止");
+            AppendTranscript("[系统] 麦克风识别已停止，对方语音仍可识别。检查输入设备后重新开始聆听。");
+        });
+    }
+
+    private void OnMicrophoneFrame(WasapiLoopbackSource source, SherpaAsrEngine engine, AudioFrame frame)
+    {
+        if (!ReferenceEquals(source, _micSource) || Dispatcher.HasShutdownStarted || Volatile.Read(ref _micAsrFailed) != 0) return;
+        try
+        {
+            var now = DateTime.UtcNow;
+            _micGate.ObserveAudio(frame, now);
+            foreach (var partial in engine.Process(frame))
+            {
+                if (partial.IsFinal)
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        if (!_isClosing && ReferenceEquals(source, _micSource))
+                            HandleRecognizedSentence(AudioRole.Local, partial.Text, now);
+                    });
+                _micGate.ObserveRecognition(partial.IsFinal, now);
+            }
+        }
+        catch (Exception ex)
+        {
+            OnMicrophoneFailed(source, ex);
+        }
     }
 
     private void ShowCaptureError(string message)
@@ -566,7 +691,6 @@ public partial class MainWindow : Window
             foreach (var partial in events)
             {
                 var item = partial;
-                _answerGate.ObserveRecognition(item.IsFinal, DateTime.UtcNow);
                 if (item.IsFinal)
                 {
                     Dispatcher.BeginInvoke(new Action(() =>
@@ -583,11 +707,13 @@ public partial class MainWindow : Window
                         {
                             if (!_isClosing && ReferenceEquals(source, _loopbackSource) && !Dispatcher.HasShutdownStarted && IsVisible)
                             {
-                                TxtLiveAsr.Text = $"[对方] {item.Text}";
+                                var sourceLabel = _micSource?.IsReceivingAudio == true ? "系统播放" : "对方";
+                                TxtLiveAsr.Text = $"[{sourceLabel}] {item.Text}";
                             }
                         }));
                     }
                 }
+                _answerGate.ObserveRecognition(item.IsFinal, DateTime.UtcNow);
             }
         }
         catch (Exception ex)
@@ -613,32 +739,56 @@ public partial class MainWindow : Window
             partial.EndTime.TotalSeconds,
             lagMs);
 
-        HandleRecognizedSentence(partial.Text);
+        var now = DateTime.UtcNow;
+        if (_micSource?.IsReceivingAudio == true && _config.Mic.EchoGate)
+            _possibleEchoes.Enqueue((partial.Text, now));
+        else
+        {
+            CommitRemoteSpeech(now, flush: true);
+            HandleRecognizedSentence(AudioRole.Remote, partial.Text, now);
+        }
     }
 
-    private void HandleRecognizedSentence(string sentence)
+    private void CommitRemoteSpeech(DateTime now, bool flush = false)
+    {
+        while (_possibleEchoes.TryPeek(out var segment))
+        {
+            if (!flush && _micSource?.IsReceivingAudio == true &&
+                (now - segment.Timestamp).TotalMilliseconds < 500) return;
+
+            _possibleEchoes.Dequeue();
+            if (!_contextBuffer.IsLikelyLocalPlayback(segment.Text, segment.Timestamp))
+                HandleRecognizedSentence(AudioRole.Remote, segment.Text, segment.Timestamp);
+        }
+    }
+
+    private void HandleRecognizedSentence(AudioRole role, string sentence, DateTime timestamp)
     {
         if (string.IsNullOrWhiteSpace(sentence))
         {
             return;
         }
 
-        AppendTranscript($"[对方] {sentence}");
-        _contextBuffer.AddTurn(AudioRole.Remote, sentence);
+        AppendTranscript($"{(role == AudioRole.Local ? "[我]" : "[对方]")} {sentence}");
+        _contextBuffer.AddTurn(role, sentence, timestamp);
 
-        // 不再判断"是不是疑问句"：所有识别内容都进入上下文，静音超时后统一交给大模型
-        _latestSentence = sentence;
-        _pendingSpeech.Add(sentence);
-        _pendingChars = _pendingSpeech.CharacterCount;
+        if (role == AudioRole.Remote)
+        {
+            _latestSentence = sentence;
+            _pendingSpeech.Add(sentence);
+            _pendingChars = _pendingSpeech.CharacterCount;
+        }
 
-        if (_config.Privacy.SaveTranscript)
+        if (role == AudioRole.Remote && _config.Privacy.SaveTranscript)
             AppLogger.Instance.Information("ASR 转录（已开启保存）: {Sentence}", sentence);
     }
 
     private void OnAutoAnswerTick(object? sender, EventArgs e)
     {
+        var now = DateTime.UtcNow;
+        CommitRemoteSpeech(now);
         if (_isClosing || _isAnswering || _asrEngine is null || _autoAnswerPausedAfterError || _autoAnswerPausedByUser ||
-            Volatile.Read(ref _asrFailed) != 0 || _loopbackSource?.IsRunning != true)
+            Volatile.Read(ref _asrFailed) != 0 || _loopbackSource?.IsReceivingAudio != true || _possibleEchoes.Count != 0)
         {
             return;
         }
@@ -649,16 +799,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_pendingChars < Math.Max(1, options.MinChars) || string.IsNullOrWhiteSpace(_latestSentence))
+        if (_pendingChars == 0 || (_pendingChars < Math.Max(1, options.MinChars) && !IsShortFollowUp(_latestSentence)))
         {
             return;
         }
 
-        var now = DateTime.UtcNow;
         if (!_answerGate.CanAnswer(now, options.SilenceMs, out var silence))
         {
             return;
         }
+
+        if (_micSource?.IsReceivingAudio == true && !_micGate.CanAnswer(now, 500, out _)) return;
 
         if (_lastAnswerAt != DateTime.MinValue &&
             (now - _lastAnswerAt).TotalMilliseconds < Math.Max(0, options.CooldownMs))
@@ -676,6 +827,10 @@ public partial class MainWindow : Window
 
         _ = GenerateAnswerAsync(latest, auto: true, silence);
     }
+
+    private static bool IsShortFollowUp(string sentence) =>
+        sentence.Trim().TrimEnd('？', '?', '。') is
+            "为什么" or "为什么呢" or "怎么做" or "怎么测" or "怎么选" or "怎么验证" or "具体呢" or "然后呢" or "后来呢" or "还有呢";
 
     private bool EnsureLlmReady(bool userInitiated)
     {
@@ -820,7 +975,8 @@ public partial class MainWindow : Window
                 UserStance = _config.Llm.UserStance,
                 ResumeText = _config.Profile.Resume,
                 MaxResumeChars = _config.Profile.MaxResumeChars,
-                RecentContext = request.Context,
+                RecentContext = _config.Mic.CaptureForContext ? request.Context :
+                    request.Context.Where(turn => turn.Role == AudioRole.Remote).ToArray(),
                 TriggerQuestion = request.QuestionOverride ?? latest,
                 ExtractAndCorrectQuestion = extractQuestion,
                 ProfessionalTerms = _config.Asr.Hotwords
@@ -1194,6 +1350,7 @@ public partial class MainWindow : Window
         _isClosing = true;
         _autoAnswerTimer.Stop();
         _answerCts?.Cancel();
+        StopMicrophone();
         _loopbackSource?.Stop();
         _loopbackSource?.Dispose();
         _loopbackSource = null;

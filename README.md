@@ -80,14 +80,14 @@ flowchart LR
 
 ### 1. 下载并解压
 
-前往 **[Releases 下载页面](https://github.com/AK993/Earcue/releases/latest)**，v0.1.10 提供两种分发方式：
+前往 **[Releases 下载页面](https://github.com/AK993/Earcue/releases/latest)**，v0.1.11 提供两种分发方式：
 
 | 分发方式 | 文件 | 模型准备 |
 | --- | --- | --- |
-| 📦 完整版 | `Earcue-v0.1.10-win-x64.zip` | 内含三套模型，保留默认使用的 INT8 权重 |
-| 🪶 Lite 轻量版 | `Earcue-v0.1.10-win-x64-Lite.zip` | 包含 .NET 运行时，首次使用时在应用中按需下载模型 |
+| 📦 完整版 | `Earcue-v0.1.11-win-x64.zip` | 内含三套模型，保留默认使用的 INT8 权重 |
+| 🪶 Lite 轻量版 | `Earcue-v0.1.11-win-x64-Lite.zip` | 包含 .NET 运行时，首次使用时在应用中按需下载模型 |
 
-v0.1.10 下载大小：**Lite 约 75.3 MiB，三模型完整版约 472.8 MiB**。完整版通过移除重复 FP32 权重缩小体积，默认使用的 INT8 推理权重保留。
+v0.1.11 下载大小：**Lite 约 77.6 MiB，三模型完整版约 474.6 MiB**。完整版通过移除重复 FP32 权重缩小体积，默认使用的 INT8 推理权重保留。
 
 - 🧩 两种包均包含应用程序、.NET 运行时和空白用户配置。
 - ▶️ 完整解压到可写目录后，双击 `Earcue.App.exe` 启动。
@@ -100,8 +100,8 @@ v0.1.10 下载大小：**Lite 约 75.3 MiB，三模型完整版约 472.8 MiB**�
 同时下载 Release 中的 `.sha256` 文件，在 ZIP 所在目录打开 PowerShell：
 
 ```powershell
-Get-FileHash .\Earcue-v0.1.10-win-x64-Lite.zip -Algorithm SHA256
-Get-Content .\Earcue-v0.1.10-win-x64-Lite.zip.sha256
+Get-FileHash .\Earcue-v0.1.11-win-x64-Lite.zip -Algorithm SHA256
+Get-Content .\Earcue-v0.1.11-win-x64-Lite.zip.sha256
 ```
 
 对比两处 SHA256，字符应完全一致，大小写不影响结果。
@@ -119,6 +119,8 @@ Get-Content .\Earcue-v0.1.10-win-x64-Lite.zip.sha256
 ### 4. 开始聆听
 
 点击 **「开始聆听」**，程序监听默认输出设备播放的声音。当说话停顿、识别结果完成且满足自动应答条件时，开始整理问题并生成回答。
+
+v0.1.11 起，可以在 **「模型与设置」→「自动应答」** 勾选 **「记住我的回答（使用默认麦克风）」**，保存后重新开始聆听。该功能默认关闭。开启后，附耳在本机分别转录默认麦克风和系统播放的声音。我方发言标为「我」，只进入近期上下文。对方追问时，附耳将实际问答文字交给所配置的回答模型。
 
 当前版本采集系统声音；需要补充自己的发言时，可使用手动提问。关闭主窗口后程序会隐藏到托盘，右键托盘图标选择 **「彻底退出」** 才会结束运行。
 
@@ -266,7 +268,7 @@ SQL Server
 <details>
 <summary><b>开始聆听后没有文字，应该检查什么？</b></summary>
 
-先确认默认输出设备正在播放声音，并检查应用中的音频和识别状态。当前版本监听系统声音，不采集麦克风。若提示模型缺失，检查是否完整解压 `models` 目录；若显示识别异常，按提示重新开始聆听。
+先确认默认输出设备正在播放声音，并检查应用中的音频和识别状态。默认只采集系统播放的声音。若自己的声音也出现在系统转录里，检查 Windows 麦克风「侦听此设备」、声卡回放和会议回声，并尽量使用耳机。开启「记住我的回答」后，麦克风转录会标为「我」。若提示模型缺失，请检查是否完整解压 `models` 目录。若显示识别异常，按提示重新开始聆听。
 
 </details>
 
@@ -331,22 +333,22 @@ dotnet run --project src\Earcue.App\Earcue.App.csproj
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\download-asr-models.ps1 -Model all -InstallRoot tools\models
-powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Version 0.1.10 -Edition Both
+powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Version 0.1.11 -Edition Both
 
 # 仅生成轻量版：无需提前准备模型
-powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Version 0.1.10 -Edition Lite
+powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Version 0.1.11 -Edition Lite
 ```
 
 输出结构：
 
 ```text
 publish/
-├── Earcue-v0.1.10-win-x64/                 # 三模型完整版
-├── Earcue-v0.1.10-win-x64.zip
-├── Earcue-v0.1.10-win-x64.zip.sha256
-├── Earcue-v0.1.10-win-x64-Lite/            # 按需下载模型的轻量版
-├── Earcue-v0.1.10-win-x64-Lite.zip
-└── Earcue-v0.1.10-win-x64-Lite.zip.sha256
+├── Earcue-v0.1.11-win-x64/                 # 三模型完整版
+├── Earcue-v0.1.11-win-x64.zip
+├── Earcue-v0.1.11-win-x64.zip.sha256
+├── Earcue-v0.1.11-win-x64-Lite/            # 按需下载模型的轻量版
+├── Earcue-v0.1.11-win-x64-Lite.zip
+└── Earcue-v0.1.11-win-x64-Lite.zip.sha256
 ```
 
 脚本将 .NET 运行时与模型一并打包，并生成空白用户配置。目标版本已存在时会停止，请使用新的版本号或先整理旧包。源码仓库通过 `.gitignore` 排除本地模型、配置、日志和发布产物。
